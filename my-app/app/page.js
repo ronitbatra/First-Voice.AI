@@ -7,15 +7,6 @@ import { useState, useEffect, useRef } from "react";
 import { motion, useInView, useAnimation } from "framer-motion";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "../lib/supabase";
-import {
-  requestLocationPermission,
-  getLocationNameFromCoords,
-  fetchMentalHealthProviders,
-  generateFallbackProviders,
-  formatProvidersForDisplay,
-} from "../components/locationServices";
-
-console.log(1);
 
 // 1) NEW - import speech recognition
 import SpeechRecognition, {
@@ -93,17 +84,55 @@ export default function Home() {
   // Add state for transcript visibility toggle
   const [showTranscript, setShowTranscript] = useState(true);
 
-  // Add state for location services
-  const [locationPermission, setLocationPermission] = useState("pending"); // "pending", "granted", "denied"
-  const [userLocation, setUserLocation] = useState(null);
-  const [locationName, setLocationName] = useState(null);
-  const [localProviders, setLocalProviders] = useState([]);
-  const [isLoadingProviders, setIsLoadingProviders] = useState(false);
-
   // New state for PDF and text-to-speech
   const [pdfUrl, setPdfUrl] = useState(null);
   const [currentSpeechText, setCurrentSpeechText] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [currentSummaryText, setCurrentSummaryText] = useState("");
+
+  // Add state for location data
+  const [userLocation, setUserLocation] = useState(null);
+  const [localMentalHealthServices, setLocalMentalHealthServices] = useState(
+    []
+  );
+  const [isLoadingServices, setIsLoadingServices] = useState(false);
+  const [shouldRequestLocation, setShouldRequestLocation] = useState(false);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  // Wrap long lines to maximum 76 characters per line for PDF formatting
+  const wrapToMaxLength = (text, maxLength = 76) => {
+    const lines = text.split("\n");
+    return lines
+      .map((line) => {
+        // Skip short lines or empty lines
+        if (line.length <= maxLength) return line;
+
+        const wrappedLines = [];
+        let currentLine = "";
+
+        // Split by spaces to avoid breaking words
+        const words = line.split(" ");
+
+        for (const word of words) {
+          // If adding this word exceeds the max length, start a new line
+          if (currentLine.length + word.length + 1 > maxLength) {
+            wrappedLines.push(currentLine);
+            currentLine = word;
+          } else {
+            // Add to current line with a space if not the first word
+            currentLine = currentLine ? `${currentLine} ${word}` : word;
+          }
+        }
+
+        // Add the last line if there's anything left
+        if (currentLine) {
+          wrappedLines.push(currentLine);
+        }
+
+        return wrappedLines.join("\n");
+      })
+      .join("\n");
+  };
 
   // ================ react-speech-recognition variables ==================
   const {
@@ -123,137 +152,29 @@ export default function Home() {
     };
   }, [pdfUrl]);
 
-  // Request location permission when the app loads
+  // Add simple location permission request on app load
   useEffect(() => {
-    const getLocation = async () => {
-      try {
-        setLocationPermission("pending");
-
-        // Request permission to access user's location
-        const coords = await requestLocationPermission();
-        setUserLocation(coords);
-        setLocationPermission("granted");
-
-        // Get location name from coordinates
-        const locationData = await getLocationNameFromCoords(
-          coords.latitude,
-          coords.longitude
-        );
-        if (locationData) {
-          setLocationName(locationData.formattedLocation);
-          console.log(
-            `Location identified as: ${locationData.formattedLocation}`
-          );
-        } else {
-          // If we couldn't get the location name, generate a placeholder
-          const placeholderName = `Area near ${coords.latitude.toFixed(
-            2
-          )}, ${coords.longitude.toFixed(2)}`;
-          setLocationName(placeholderName);
-          console.log(`Using placeholder location: ${placeholderName}`);
+    // Check if geolocation is supported
+    if ("geolocation" in navigator) {
+      // Ask for location permission when the app loads
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          // Success - store basic location data
+          const locationData = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+          setUserLocation(locationData);
+        },
+        (error) => {
+          // Error or permission denied
+          console.error("Geolocation error:", error.message);
         }
-      } catch (error) {
-        console.error("Location permission error:", error);
-        setLocationPermission("denied");
-      }
-    };
-
-    // Start the location request with a slight delay
-    const timer = setTimeout(() => {
-      getLocation();
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Function to fetch mental health providers based on user's location
-  const fetchLocalMentalHealthProviders = async () => {
-    try {
-      if (!userLocation || !locationName) {
-        console.error("Cannot fetch providers: missing location data");
-        return;
-      }
-
-      setIsLoadingProviders(true);
-
-      // Prepare location data
-      const locationData = {
-        latitude: userLocation.latitude,
-        longitude: userLocation.longitude,
-        locationName: locationName,
-      };
-
-      // Fetch providers from API
-      const providers = await fetchMentalHealthProviders(locationData);
-
-      if (providers && providers.length > 0) {
-        setLocalProviders(providers);
-        console.log(
-          `Retrieved ${providers.length} local mental health providers`
-        );
-      } else {
-        // If no providers returned, use fallback
-        const fallbackProviders = generateFallbackProviders(
-          locationName,
-          userLocation.latitude,
-          userLocation.longitude
-        );
-        setLocalProviders(fallbackProviders);
-        console.log(`Using ${fallbackProviders.length} fallback providers`);
-      }
-    } catch (error) {
-      console.error("Error fetching mental health providers:", error);
-
-      // Generate fallback providers on error
-      if (locationName && userLocation) {
-        const fallbackProviders = generateFallbackProviders(
-          locationName,
-          userLocation.latitude,
-          userLocation.longitude
-        );
-        setLocalProviders(fallbackProviders);
-        console.log(
-          `Using ${fallbackProviders.length} fallback providers after error`
-        );
-      }
-    } finally {
-      setIsLoadingProviders(false);
-    }
-  };
-
-  // Function to manually request location permission
-  const handleRequestLocation = async () => {
-    try {
-      setLocationPermission("pending");
-
-      // Request permission to access user's location
-      const coords = await requestLocationPermission();
-      setUserLocation(coords);
-      setLocationPermission("granted");
-
-      // Get location name from coordinates
-      const locationData = await getLocationNameFromCoords(
-        coords.latitude,
-        coords.longitude
       );
-      if (locationData) {
-        setLocationName(locationData.formattedLocation);
-      } else {
-        // If we couldn't get the location name, generate a placeholder
-        setLocationName(
-          `Area near ${coords.latitude.toFixed(2)}, ${coords.longitude.toFixed(
-            2
-          )}`
-        );
-      }
-
-      // Fetch providers with the new location
-      await fetchLocalMentalHealthProviders();
-    } catch (error) {
-      console.error("Location permission error:", error);
-      setLocationPermission("denied");
+    } else {
+      console.error("Geolocation is not supported by this browser");
     }
-  };
+  }, []);
 
   // Control speech recognition when AI is speaking to prevent echo
   useEffect(() => {
@@ -305,10 +226,20 @@ export default function Home() {
     missionBoxControls,
   ]);
 
-  // Show partial text live as the user speaks
+  // Show partial text live as the user speaks - enhanced for animation visibility
   useEffect(() => {
-    setPartialSpeech(interimTranscript);
-  }, [interimTranscript]);
+    if (interimTranscript) {
+      setPartialSpeech(interimTranscript);
+
+      // If we're in Voice Only mode, ensure the listening animation is visible
+      if (!showTranscript && !listening) {
+        SpeechRecognition.startListening({
+          continuous: true,
+          interimResults: true,
+        });
+      }
+    }
+  }, [interimTranscript, listening, showTranscript]);
 
   // Once the user stops speaking → finalTranscript is set
   useEffect(() => {
@@ -327,13 +258,10 @@ export default function Home() {
         return;
       }
 
-      // Add final transcript to call log
+      // Add final transcript to call log for UI display purposes only
       setCallLog((prev) => [...prev, { type: "user", text: finalTranscript }]);
-      // Add user's message to conversation history
-      setConversationHistory((prev) => [
-        ...prev,
-        { role: "user", content: finalTranscript },
-      ]);
+
+      // Clear partial speech
       setPartialSpeech("");
 
       // If we're in personal help question mode, handle it differently
@@ -477,14 +405,22 @@ export default function Home() {
         }`
       );
 
-      // Make the API request
+      // Important: Instead of updating based on current state, create a copy
+      // of the conversation history that includes the current user input
+      // This ensures the AI response is generated with the most current context
+      const updatedHistory = [
+        ...conversationHistory,
+        { role: "user", content: userSpokenText },
+      ];
+
+      // Make the API request with updated history
       const res = await fetch("/api/v1/query", {
         method: "POST",
         body: JSON.stringify({
           problem_description: "Mental health support",
           stage: 1, // Using stage 1 for the structured conversation flow
           last_reply: userSpokenText,
-          history: conversationHistory,
+          history: updatedHistory, // Use updated history including current message
           questionNumber: currentQuestion,
           answerSufficient: localAnswerCheck, // Pass our local check to the API
         }),
@@ -542,8 +478,11 @@ export default function Home() {
           setAskForProviders(true);
         }
 
-        // Make the summary request
-        handleFinalSummary(conversationHistory);
+        // Make the summary request with the full updated conversation history
+        handleFinalSummary([
+          ...updatedHistory,
+          { role: "assistant", content: data.msg },
+        ]);
       }
 
       setLoading(false);
@@ -578,29 +517,12 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // If we have location permission and local providers are not loaded yet, fetch them
-      if (
-        locationPermission === "granted" &&
-        userLocation &&
-        !localProviders.length
-      ) {
-        try {
-          await fetchLocalMentalHealthProviders();
-        } catch (error) {
-          console.error("Error pre-fetching local providers:", error);
-          // Continue with the summary even if fetching providers failed
-        }
-      }
-
       const res2 = await fetch("/api/v1/query", {
         method: "POST",
         body: JSON.stringify({
           problem_description: "Mental health support",
           stage: 2, // Summaries are done in stage 2
           history: history,
-          locationPermission: locationPermission,
-          locationName: locationName,
-          userLocation: userLocation,
         }),
       });
 
@@ -642,44 +564,7 @@ export default function Home() {
         })
         .join("\n• ");
 
-      // Wrap long lines to maximum 76 characters per line for PDF formatting
-      const wrapToMaxLength = (text, maxLength = 76) => {
-        const lines = text.split("\n");
-        return lines
-          .map((line) => {
-            // Skip short lines or empty lines
-            if (line.length <= maxLength) return line;
-
-            const wrappedLines = [];
-            let currentLine = "";
-
-            // Split by spaces to avoid breaking words
-            const words = line.split(" ");
-
-            for (const word of words) {
-              // If adding this word exceeds the max length, start a new line
-              if (currentLine.length + word.length + 1 > maxLength) {
-                wrappedLines.push(currentLine);
-                currentLine = word;
-              } else {
-                // Add to current line with a space if not the first word
-                currentLine = currentLine ? `${currentLine} ${word}` : word;
-              }
-            }
-
-            // Add the last line if there's anything left
-            if (currentLine) {
-              wrappedLines.push(currentLine);
-            }
-
-            return wrappedLines.join("\n");
-          })
-          .join("\n");
-      };
-
-      const formattedTriagePoints = wrapToMaxLength(
-        `• ${processedTriagePoints}`
-      );
+      const formattedTriagePoints = wrapToMaxLength(`${processedTriagePoints}`);
 
       const summaryText = `Key Points from Our Conversation:
 ${formattedTriagePoints}
@@ -694,8 +579,8 @@ Next Steps:
 • Reach out if you need additional support
 • Consider connecting with mental health resources in your area`;
 
-      // Generate and store PDF
-      await generateAndStorePDF(summaryText);
+      // Store the summary for later PDF generation
+      setCurrentSummaryText(summaryText);
 
       // Add the summary response to conversation history
       setConversationHistory((prev) => [
@@ -768,8 +653,6 @@ Next Steps:
         body: JSON.stringify({
           stage: 3, // Personal help question stage
           history: conversationHistory,
-          locationPermission: locationPermission,
-          locationName: locationName || "your area",
         }),
       });
 
@@ -778,23 +661,9 @@ Next Steps:
       }
 
       const data = await res.json();
-
-      // Create personalized question based on location permission
-      let personalHelpQuestion;
-
-      if (data.personalHelpQuestion) {
-        personalHelpQuestion = data.personalHelpQuestion;
-      } else {
-        // Use default questions based on location permission
-        if (locationPermission === "granted") {
-          personalHelpQuestion = `Would you like me to help you find local mental health resources near ${
-            locationName || "your area"
-          }?`;
-        } else {
-          personalHelpQuestion =
-            "Would you like me to help you find mental health resources? I could suggest local options if you enable location access in settings.";
-        }
-      }
+      const personalHelpQuestion =
+        data.personalHelpQuestion ||
+        "Would you like me to help you find mental health resources in your area?";
 
       // Add question to conversation
       setConversationHistory((prev) => [
@@ -818,17 +687,9 @@ Next Steps:
       console.error("Personal help question error:", error);
       setLoading(false);
 
-      // Fall back to a default question based on location permission
-      let defaultQuestion;
-      if (locationPermission === "granted") {
-        defaultQuestion = `Would you like me to help you find local mental health resources near ${
-          locationName || "your area"
-        }?`;
-      } else {
-        defaultQuestion =
-          "Would you like me to help you find mental health resources? I could suggest local options if you enable location access in settings.";
-      }
-
+      // Fall back to a default question
+      const defaultQuestion =
+        "Would you like me to help you find mental health resources in your area?";
       setConversationHistory((prev) => [
         ...prev,
         { role: "assistant", content: defaultQuestion },
@@ -846,175 +707,1249 @@ Next Steps:
     }
   };
 
+  // Handler for location updates from the Geolocation component
+  const handleLocationUpdate = (locationData) => {
+    setUserLocation(locationData);
+    if (locationData) {
+      // Fetch mental health services based on location
+      fetchLocalMentalHealthServices(locationData);
+    } else {
+      // If location access failed, still generate PDF but without local services
+      setIsLoadingServices(false);
+      generatePDFWithAvailableData();
+    }
+  };
+
+  // Function to fetch mental health services using OpenAI web search
+  const fetchLocalMentalHealthServices = async (location) => {
+    try {
+      setIsLoadingServices(true);
+
+      const response = await fetch("/api/v1/searchServices", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          latitude: location.latitude,
+          longitude: location.longitude,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setLocalMentalHealthServices(data.services || []);
+      } else {
+        console.error("Failed to fetch mental health services");
+      }
+    } catch (error) {
+      console.error("Error fetching mental health services:", error);
+    } finally {
+      setIsLoadingServices(false);
+      // Generate PDF after services are fetched (or failed to fetch)
+      generatePDFWithAvailableData();
+    }
+  };
+
+  // Function to generate PDF with available data (regardless of location data success)
+  const generatePDFWithAvailableData = () => {
+    if (currentSummaryText && !isGeneratingPDF) {
+      setIsGeneratingPDF(true);
+      generateAndStorePDF(currentSummaryText).finally(() => {
+        setIsGeneratingPDF(false);
+      });
+    }
+  };
+
   // Handle user's response to the personal help question
-  const handlePersonalHelpResponse = async (response) => {
-    setShowingPersonalHelpQuestion(false);
-    setPersonalHelpResponse(response);
+  const handlePersonalHelpResponse = async (userResponse) => {
+    // Check if the user's response is affirmative using an expanded list of keywords
+    const affirmativeResponse = checkIfAffirmative(userResponse);
 
-    // Check if they want help
-    const lowerResponse = response.toLowerCase();
-    const wantsHelp =
-      lowerResponse.includes("yes") ||
-      lowerResponse.includes("sure") ||
-      lowerResponse.includes("okay") ||
-      lowerResponse.includes("ok") ||
-      lowerResponse.includes("please") ||
-      lowerResponse.includes("would like");
+    setStage("completed");
+    setIsCallActive(false);
+    // Fix: replace stopListening() with SpeechRecognition.stopListening()
+    SpeechRecognition.stopListening();
 
-    if (wantsHelp) {
-      // First, show a loading message
-      const loadingMessage = "Looking up mental health resources for you...";
-      setCallLog((prev) => [
-        ...prev,
-        { type: "support", text: loadingMessage },
+    // Extract the summary text from conversation history
+    const summaryEntries = conversationHistory.filter(
+      (entry) =>
+        entry.role === "assistant" &&
+        entry.content.includes("Key Points from Our Conversation:")
+    );
+
+    let summaryText = "";
+    if (summaryEntries.length > 0) {
+      summaryText = summaryEntries[0].content;
+    } else {
+      // Fallback if no summary found
+      summaryText = "Summary not available";
+    }
+
+    // Extract user context for provider recommendations
+    const userContext = extractUserContext(conversationHistory);
+
+    // Set the summary text for PDF generation
+    setCurrentSummaryText(summaryText);
+
+    // If the user's response was affirmative, proceed with generating the PDF
+    if (affirmativeResponse) {
+      // Update the call log with a loading message
+      const loadingMessage =
+        "I'm personalizing your recommendations based on our conversation...";
+      setCallLog((prevLog) => [
+        ...prevLog,
+        { role: "assistant", content: loadingMessage },
       ]);
-      setCurrentSpeechText(loadingMessage);
+
+      // Set loading state
+      setLoading(true);
 
       try {
-        // If location is granted but we haven't fetched providers yet, fetch them now
-        if (
-          locationPermission === "granted" &&
-          userLocation &&
-          (!localProviders || localProviders.length === 0)
-        ) {
-          await fetchLocalMentalHealthProviders();
+        // Call the API for personalized final comments and doctor recommendations
+        const response = await fetch("/api/v1/doctorRecommendations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            summary: summaryText,
+            userContext: userContext,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API responded with status: ${response.status}`);
         }
 
-        // Extract user name
-        let userName = "";
-        for (let i = 0; i < Math.min(5, conversationHistory.length); i++) {
-          const message = conversationHistory[i];
-          if (message.role === "user") {
-            const nameMatch =
-              message.content.match(/my name is (\w+)/i) ||
-              message.content.match(/i(?:')?m (\w+)/i);
-            if (nameMatch && nameMatch[1]) {
-              userName = nameMatch[1];
-              userName =
-                userName.charAt(0).toUpperCase() +
-                userName.slice(1).toLowerCase();
+        // Parse the API response
+        const data = await response.json();
+
+        // Save the personalized comments and recommendations for the PDF
+        const finalComments = data.finalComments;
+        const doctorRecommendations = data.doctorRecommendations;
+
+        // Clear the loading message
+        setLoading(false);
+
+        // Update the call log with a confirmation message (without the resources)
+        const confirmationMessage =
+          "Thank you for your response. I've included personalized recommendations and resources in your PDF summary. If you need immediate assistance, please reach out to a mental health professional or crisis service.";
+
+        // Update the call log with a confirmation message (used for display only)
+        setCallLog((prevLog) => [
+          ...prevLog.filter((item) => item.content !== loadingMessage), // Remove loading message
+          { role: "assistant", content: confirmationMessage },
+        ]);
+
+        // Add to conversation history (this doesn't get read aloud)
+        setConversationHistory((prevHistory) => [
+          ...prevHistory,
+          { role: "assistant", content: confirmationMessage },
+        ]);
+
+        // Generate the PDF with the summary text, user context, and personalized recommendations
+        generateAndStorePDF(
+          summaryText,
+          userContext,
+          finalComments,
+          doctorRecommendations
+        );
+      } catch (error) {
+        console.error("Error fetching personalized recommendations:", error);
+        setLoading(false);
+
+        // Update the call log with an error message
+        const errorMessage =
+          "I wasn't able to personalize your recommendations, but I've included general resources in your PDF summary.";
+        setCallLog((prevLog) => [
+          ...prevLog.filter((item) => item.content !== loadingMessage), // Remove loading message
+          { role: "assistant", content: errorMessage },
+        ]);
+
+        // Generate PDF without personalized recommendations
+        generateAndStorePDF(summaryText, userContext);
+      }
+    } else {
+      // If the user's response was negative, acknowledge it without generating PDF
+      const declineMessage =
+        "I understand. Thank you for your time. If you change your mind or need support in the future, feel free to start a new conversation.";
+      setCallLog((prevLog) => [
+        ...prevLog,
+        { role: "assistant", content: declineMessage },
+      ]);
+
+      // Add to conversation history
+      setConversationHistory((prevHistory) => [
+        ...prevHistory,
+        { role: "assistant", content: declineMessage },
+      ]);
+
+      // Set the decline message for text-to-speech
+      setCurrentSpeechText(declineMessage);
+    }
+  };
+
+  // Function to check if a response is affirmative
+  const checkIfAffirmative = (response) => {
+    if (!response) return false;
+
+    const lowerReply = response.toLowerCase().trim();
+
+    // Expanded list of affirmative words and phrases
+    const affirmativeWords = [
+      "yes",
+      "yeah",
+      "yea",
+      "yep",
+      "sure",
+      "ok",
+      "okay",
+      "of course",
+      "definitely",
+      "absolutely",
+      "love to",
+      "would love",
+      "certainly",
+      "please",
+      "i would",
+      "why not",
+      "sounds good",
+      "good idea",
+      "open",
+      "willing",
+    ];
+
+    // Check if any affirmative words are included in the response
+    return (
+      affirmativeWords.some((word) => lowerReply.includes(word)) ||
+      !lowerReply.includes("no")
+    );
+  };
+
+  // Function to extract relevant context from the conversation
+  const extractUserContext = (conversation) => {
+    // Initialize context object
+    const context = {
+      concerns: [],
+      symptoms: [],
+      preferences: [],
+      demographic: {
+        age: null,
+        gender: null,
+        location: null,
+      },
+    };
+
+    // Keywords to look for in the conversation
+    const concernKeywords = {
+      anxiety: ["anxiety", "anxious", "worry", "panic", "stress", "nervous"],
+      depression: [
+        "depression",
+        "depressed",
+        "sad",
+        "hopeless",
+        "unmotivated",
+        "low mood",
+        "down",
+      ],
+      trauma: ["trauma", "ptsd", "traumatic", "abuse", "assault"],
+      grief: ["grief", "loss", "died", "death", "passed away", "bereavement"],
+      "substance use": [
+        "alcohol",
+        "drug",
+        "substance",
+        "addiction",
+        "drinking",
+      ],
+      ocd: ["ocd", "obsessive", "compulsive", "intrusive thoughts", "rituals"],
+      bipolar: ["bipolar", "mania", "manic", "mood swings"],
+      "eating disorder": ["eating", "anorexia", "bulimia", "binge", "food"],
+      insomnia: [
+        "insomnia",
+        "sleep",
+        "trouble sleeping",
+        "nightmares",
+        "can't sleep",
+      ],
+      relationship: [
+        "relationship",
+        "marriage",
+        "partner",
+        "divorce",
+        "family",
+        "parents",
+      ],
+      school: ["school", "college", "university", "academic", "grades", "exam"],
+    };
+
+    const symptomKeywords = {
+      fatigue: ["tired", "fatigue", "exhausted", "no energy", "lethargy"],
+      concentration: ["focus", "concentrate", "attention", "distracted"],
+      appetite: ["appetite", "eating", "weight", "hungry", "food"],
+      pain: ["pain", "ache", "headache", "migraine", "hurt"],
+      "panic attacks": [
+        "panic attack",
+        "heart racing",
+        "hyperventilate",
+        "can't breathe",
+      ],
+      "social isolation": [
+        "lonely",
+        "isolated",
+        "alone",
+        "withdrawal",
+        "no friends",
+      ],
+      "self-harm": ["self-harm", "cutting", "hurt myself"],
+      suicidal: ["suicidal", "kill myself", "end it all", "no point in living"],
+    };
+
+    const preferenceKeywords = {
+      therapy: [
+        "therapy",
+        "therapist",
+        "counseling",
+        "talk therapy",
+        "psychotherapy",
+      ],
+      medication: [
+        "medication",
+        "meds",
+        "prescription",
+        "drug",
+        "antidepressant",
+      ],
+      cbt: ["cbt", "cognitive", "behavioral", "behaviour"],
+      group: ["group therapy", "support group", "group session"],
+      "female provider": ["female", "woman", "not a man"],
+      "male provider": ["male", "man", "not a woman"],
+      virtual: ["online", "virtual", "zoom", "telehealth", "remote"],
+      "in-person": ["face to face", "in person", "in-person", "office"],
+    };
+
+    // Extract user name and location if available
+    for (const message of conversation) {
+      if (message.role === "user") {
+        const content = message.content.toLowerCase();
+
+        // Check for name information
+        const nameMatch =
+          content.match(/my name is (\w+)/i) ||
+          content.match(/i(?:')?m (\w+)/i) ||
+          content.match(/(\w+) is my name/i);
+
+        if (nameMatch && nameMatch[1]) {
+          context.name =
+            nameMatch[1].charAt(0).toUpperCase() +
+            nameMatch[1].slice(1).toLowerCase();
+        }
+
+        // Check for location information
+        const locationMatch =
+          content.match(/from (\w+)/i) ||
+          content.match(/live in (\w+)/i) ||
+          content.match(/in (\w+) city/i);
+
+        if (locationMatch && locationMatch[1]) {
+          context.demographic.location = locationMatch[1];
+        }
+
+        // Check for age information
+        const ageMatch =
+          content.match(/(\d+) years old/i) ||
+          content.match(/(\d+) year old/i) ||
+          content.match(/i(?:')?m (\d+)/i) ||
+          content.match(/age (?:is|of) (\d+)/i);
+
+        if (ageMatch && ageMatch[1]) {
+          context.demographic.age = parseInt(ageMatch[1], 10);
+        }
+
+        // Check for gender information
+        if (
+          content.includes("male") ||
+          content.includes("man") ||
+          content.includes("guy") ||
+          content.includes("boy") ||
+          content.includes("he/him")
+        ) {
+          context.demographic.gender = "male";
+        } else if (
+          content.includes("female") ||
+          content.includes("woman") ||
+          content.includes("girl") ||
+          content.includes("lady") ||
+          content.includes("she/her")
+        ) {
+          context.demographic.gender = "female";
+        } else if (
+          content.includes("non-binary") ||
+          content.includes("enby") ||
+          content.includes("they/them") ||
+          content.includes("genderqueer")
+        ) {
+          context.demographic.gender = "non-binary";
+        }
+
+        // Check for concerns
+        for (const [concern, keywords] of Object.entries(concernKeywords)) {
+          for (const keyword of keywords) {
+            if (content.includes(keyword)) {
+              if (!context.concerns.includes(concern)) {
+                context.concerns.push(concern);
+              }
               break;
             }
           }
         }
 
-        // Extract key concerns
-        const concerns = [];
-        for (const message of conversationHistory) {
-          if (message.role === "user") {
-            const content = message.content.toLowerCase();
-            if (content.includes("depress")) concerns.push("depression");
-            if (content.includes("anxi")) concerns.push("anxiety");
-            if (content.includes("stress")) concerns.push("stress");
-            if (
-              content.includes("grief") ||
-              content.includes("loss") ||
-              content.includes("died")
-            )
-              concerns.push("grief");
-            if (content.includes("family")) concerns.push("family issues");
-            if (content.includes("sleep")) concerns.push("sleep issues");
+        // Check for symptoms
+        for (const [symptom, keywords] of Object.entries(symptomKeywords)) {
+          for (const keyword of keywords) {
+            if (content.includes(keyword)) {
+              if (!context.symptoms.includes(symptom)) {
+                context.symptoms.push(symptom);
+              }
+              break;
+            }
           }
         }
 
-        // Create message intro based on name, concerns, and location
-        let messageIntro = userName ? `${userName}, here` : "Here";
-        const concernsText =
-          concerns.length > 0
-            ? ` specifically for ${concerns.slice(0, 3).join(", ")}`
-            : "";
+        // Check for preferences
+        for (const [preference, keywords] of Object.entries(
+          preferenceKeywords
+        )) {
+          for (const keyword of keywords) {
+            if (content.includes(keyword)) {
+              if (!context.preferences.includes(preference)) {
+                context.preferences.push(preference);
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
 
-        let resourcesMessage;
+    return context;
+  };
 
-        // Check if we have location permission and local providers
-        if (
-          locationPermission === "granted" &&
-          userLocation &&
-          localProviders.length > 0
-        ) {
-          // Format providers for display
-          const providersText = formatProvidersForDisplay(localProviders);
+  // Generate and store PDF with conversation summary
+  const generateAndStorePDF = async (
+    text,
+    userContext = null,
+    finalComments = null,
+    doctorRecommendations = null
+  ) => {
+    try {
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage([550, 750]);
+      const { height, width } = page.getSize();
 
-          // Create location-based resources message
-          resourcesMessage = `${messageIntro} are some mental health resources${concernsText} near ${locationName}:\n\n${providersText}\n\n---\n\nNATIONAL RESOURCES:\n• 📞 National Mental Health Hotline: 988 - Available 24/7 for crisis support\n• 💬 Crisis Text Line: Text HOME to 741741 for immediate text-based support\n• 🌐 SAMHSA's National Helpline: 1-800-662-4357 - Treatment referral service\n• 🔎 Psychology Today Directory: psychologytoday.com/us/therapists\n\nRemember that reaching out is a sign of strength. Support is always available when you need it.`;
-        } else {
-          // Create general resources message (no location)
-          resourcesMessage = `${messageIntro} are some mental health resources that might help${concernsText}:\n\n
-NATIONAL RESOURCES:
-• 📞 National Mental Health Hotline: 988 - Available 24/7 for crisis support
-• 💬 Crisis Text Line: Text HOME to 741741 for immediate text-based support
-• 🌐 BetterHelp: Online therapy platform with licensed professionals (betterhelp.com)
-• 🔎 Psychology Today: Directory to find therapists in your area (psychologytoday.com/us/therapists)
-• 📞 SAMHSA's National Helpline: 1-800-662-4357 - Treatment referral service
-• 🏢 National Alliance on Mental Illness (NAMI): Support groups and education (nami.org)
-• 🌐 Mental Health America: Resources and support at mhanational.org
+      // Load fonts
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
 
-${
-  locationPermission === "denied"
-    ? "If you enable location permissions, I could provide local resources specific to your area."
-    : ""
-}
+      // Add the title in bold, large text
+      page.drawText("Summary Of Pre-Screening", {
+        x: 50,
+        y: height - 50,
+        size: 18,
+        font: boldFont,
+        color: rgb(0, 0, 0),
+      });
 
-Remember that reaching out is a sign of strength. Support is always available when you need it.`;
+      // Add a line under the title
+      page.drawLine({
+        start: { x: 50, y: height - 60 },
+        end: { x: width - 50, y: height - 60 },
+        thickness: 1,
+        color: rgb(0, 0, 0),
+      });
+
+      // Process the text content with special formatting for section headings
+      const textLines = text.split("\n");
+      let yPosition = height - 90; // Start below the title and line
+
+      textLines.forEach((line) => {
+        if (yPosition < 50) {
+          // Add a new page if we're running out of space
+          const newPage = pdfDoc.addPage([550, 750]);
+          yPosition = newPage.getSize().height - 50;
         }
 
-        // Add resources to conversation
-        setCallLog((prev) => {
-          // Remove loading message
-          const updatedLog = prev.filter(
-            (entry) => entry.text !== loadingMessage
-          );
-          return [...updatedLog, { type: "support", text: resourcesMessage }];
+        // Check if this line is a section heading that should be bolded
+        const isBoldHeading =
+          line.includes("Key Points from Our Conversation:") ||
+          line.includes("Recommendations:") ||
+          line.includes("Next Steps:");
+
+        page.drawText(line, {
+          x: 50,
+          y: yPosition,
+          size: isBoldHeading ? 14 : 12, // Slightly larger for headings
+          font: isBoldHeading ? boldFont : regularFont,
+          color: rgb(0, 0, 0),
         });
 
-        setConversationHistory((prev) => [
-          ...prev,
-          { role: "assistant", content: resourcesMessage },
-        ]);
+        // Add more space after headings
+        yPosition -= isBoldHeading ? 25 : 20;
+      });
 
-        // Read the resources aloud
-        setCurrentSpeechText(resourcesMessage);
-      } catch (error) {
-        console.error("Error providing mental health resources:", error);
+      // Add AI-generated personalized doctor recommendations if available
+      if (doctorRecommendations && doctorRecommendations.length > 0) {
+        let recommendationsPage = pdfDoc.addPage([550, 750]);
+        const { height: recHeight, width: recWidth } =
+          recommendationsPage.getSize();
+        let recYPosition = recHeight - 50;
 
-        // Fallback message if something went wrong
-        const fallbackMessage = `I'm sorry, I encountered an issue retrieving mental health resources. Here are some national resources you can use:\n\n• National Mental Health Hotline: 988 - Available 24/7\n• Crisis Text Line: Text HOME to 741741\n• Psychology Today: Find therapists at psychologytoday.com`;
+        // Add the title for doctor recommendations
+        recommendationsPage.drawText(
+          "Personalized Healthcare Provider Recommendations",
+          {
+            x: 50,
+            y: recYPosition,
+            size: 18,
+            font: boldFont,
+            color: rgb(0, 0, 0),
+          }
+        );
 
-        setCallLog((prev) => {
-          // Remove loading message
-          const updatedLog = prev.filter(
-            (entry) =>
-              entry.text !== "Looking up mental health resources for you..."
-          );
-          return [...updatedLog, { type: "support", text: fallbackMessage }];
+        recYPosition -= 20;
+
+        // Add a line under the title
+        recommendationsPage.drawLine({
+          start: { x: 50, y: recYPosition },
+          end: { x: recWidth - 50, y: recYPosition },
+          thickness: 1,
+          color: rgb(0, 0, 0),
         });
 
-        setConversationHistory((prev) => [
-          ...prev,
-          { role: "assistant", content: fallbackMessage },
-        ]);
+        recYPosition -= 40;
 
-        // Read the fallback message aloud
-        setCurrentSpeechText(fallbackMessage);
+        // Introduction text
+        const introText =
+          "Based on the information shared during your conversation, the following healthcare providers may be appropriate for your needs:";
+
+        recommendationsPage.drawText(introText, {
+          x: 50,
+          y: recYPosition,
+          size: 12,
+          font: regularFont,
+          color: rgb(0, 0, 0),
+        });
+
+        recYPosition -= 30;
+
+        // Add each recommended provider
+        for (const rec of doctorRecommendations) {
+          if (recYPosition < 150) {
+            // Add a new page if we're running out of space
+            const newRecPage = pdfDoc.addPage([550, 750]);
+            recYPosition = newRecPage.getSize().height - 50;
+            // Update the recommendationsPage reference to the new page
+            recommendationsPage = newRecPage;
+          }
+
+          // Provider type
+          recommendationsPage.drawText(rec.providerType, {
+            x: 50,
+            y: recYPosition,
+            size: 14,
+            font: boldFont,
+            color: rgb(0, 0, 0),
+          });
+
+          recYPosition -= 25;
+
+          // Rationale
+          recommendationsPage.drawText("Why recommended:", {
+            x: 50,
+            y: recYPosition,
+            size: 12,
+            font: italicFont,
+            color: rgb(0, 0, 0),
+          });
+
+          recYPosition -= 20;
+
+          const rationaleLines = wrapToMaxLength(rec.rationale, 76).split("\n");
+          for (const line of rationaleLines) {
+            recommendationsPage.drawText(line, {
+              x: 60,
+              y: recYPosition,
+              size: 11,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            recYPosition -= 15;
+          }
+
+          recYPosition -= 5;
+
+          // Expectations
+          recommendationsPage.drawText("What to expect:", {
+            x: 50,
+            y: recYPosition,
+            size: 12,
+            font: italicFont,
+            color: rgb(0, 0, 0),
+          });
+
+          recYPosition -= 20;
+
+          const expectationsLines = wrapToMaxLength(rec.expectations, 76).split(
+            "\n"
+          );
+          for (const line of expectationsLines) {
+            recommendationsPage.drawText(line, {
+              x: 60,
+              y: recYPosition,
+              size: 11,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            recYPosition -= 15;
+          }
+
+          recYPosition -= 5;
+
+          // Credentials
+          recommendationsPage.drawText("Credentials to look for:", {
+            x: 50,
+            y: recYPosition,
+            size: 12,
+            font: italicFont,
+            color: rgb(0, 0, 0),
+          });
+
+          recYPosition -= 20;
+
+          const credentialsLines = wrapToMaxLength(rec.credentials, 76).split(
+            "\n"
+          );
+          for (const line of credentialsLines) {
+            recommendationsPage.drawText(line, {
+              x: 60,
+              y: recYPosition,
+              size: 11,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            recYPosition -= 15;
+          }
+
+          recYPosition -= 30; // Add space between providers
+        }
+
+        // Disclaimer
+        recYPosition = Math.max(recYPosition, 70);
+
+        const disclaimerText =
+          "Note: These recommendations are based on the information provided during your conversation. Always consult with healthcare professionals for personalized advice.";
+        const disclaimerLines = wrapToMaxLength(disclaimerText, 76).split("\n");
+
+        for (const line of disclaimerLines) {
+          recommendationsPage.drawText(line, {
+            x: 50,
+            y: recYPosition,
+            size: 10,
+            font: italicFont,
+            color: rgb(0, 0, 0),
+            opacity: 0.8,
+          });
+
+          recYPosition -= 14;
+        }
       }
-    } else {
-      // They don't want help - acknowledge and end conversation
-      const closingMessage =
-        "I understand. If you ever need resources in the future, don't hesitate to reach out. Thank you for talking with me today.";
 
-      setCallLog((prev) => [
-        ...prev,
-        { type: "support", text: closingMessage },
-      ]);
+      // If user context exists, add recommended providers section (general types)
+      if (
+        userContext &&
+        (userContext.concerns.length > 0 || userContext.symptoms.length > 0) &&
+        !doctorRecommendations
+      ) {
+        const recommendedProvidersPage = pdfDoc.addPage([550, 750]);
+        const { height: recHeight, width: recWidth } =
+          recommendedProvidersPage.getSize();
+        let recYPosition = recHeight - 50;
 
-      setConversationHistory((prev) => [
-        ...prev,
-        { role: "assistant", content: closingMessage },
-      ]);
+        // Add the title for recommended providers
+        recommendedProvidersPage.drawText("Recommended Provider Types", {
+          x: 50,
+          y: recYPosition,
+          size: 18,
+          font: boldFont,
+          color: rgb(0, 0, 0),
+        });
 
-      // Read the closing message aloud
-      setCurrentSpeechText(closingMessage);
+        recYPosition -= 20;
+
+        // Add a line under the title
+        recommendedProvidersPage.drawLine({
+          start: { x: 50, y: recYPosition },
+          end: { x: recWidth - 50, y: recYPosition },
+          thickness: 1,
+          color: rgb(0, 0, 0),
+        });
+
+        recYPosition -= 30;
+
+        // Create personalized recommendations based on user context
+        const recommendations = generateRecommendations(userContext);
+
+        // Add introduction text with personalization if available
+        let introText =
+          "Based on your conversation, here are provider types that may be appropriate for your needs:";
+        if (userContext.name) {
+          introText = `${userContext.name}, based on your conversation, here are provider types that may be appropriate for your needs:`;
+        }
+
+        recommendedProvidersPage.drawText(introText, {
+          x: 50,
+          y: recYPosition,
+          size: 12,
+          font: regularFont,
+          color: rgb(0, 0, 0),
+        });
+
+        recYPosition -= 30;
+
+        // Add each recommended provider type
+        for (const rec of recommendations) {
+          // Check if we need a new page
+          if (recYPosition < 100) {
+            const newPage = pdfDoc.addPage([550, 750]);
+            recYPosition = newPage.getSize().height - 50;
+          }
+
+          // Add provider type title
+          recommendedProvidersPage.drawText(rec.title, {
+            x: 50,
+            y: recYPosition,
+            size: 14,
+            font: boldFont,
+            color: rgb(0, 0, 0),
+          });
+
+          recYPosition -= 20;
+
+          // Add description
+          const descriptionLines = wrapToMaxLength(rec.description, 76).split(
+            "\n"
+          );
+          for (const line of descriptionLines) {
+            recommendedProvidersPage.drawText(line, {
+              x: 60,
+              y: recYPosition,
+              size: 11,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            recYPosition -= 16;
+          }
+
+          // Add when to consider this provider type
+          if (rec.whenToConsider) {
+            recYPosition -= 5;
+            recommendedProvidersPage.drawText("When to consider:", {
+              x: 60,
+              y: recYPosition,
+              size: 11,
+              font: boldFont,
+              color: rgb(0, 0, 0),
+            });
+
+            recYPosition -= 16;
+
+            const considerationLines = wrapToMaxLength(
+              rec.whenToConsider,
+              74
+            ).split("\n");
+            for (const line of considerationLines) {
+              recommendedProvidersPage.drawText(line, {
+                x: 70,
+                y: recYPosition,
+                size: 11,
+                font: regularFont,
+                color: rgb(0, 0, 0),
+              });
+
+              recYPosition -= 16;
+            }
+          }
+
+          recYPosition -= 15;
+        }
+
+        // Add notes at the bottom
+        recYPosition = Math.max(recYPosition, 70); // Ensure we're not too low on the page
+
+        const noteText = wrapToMaxLength(
+          "Note: These recommendations are based on common approaches to care. Your specific needs may vary. Always consult with a healthcare professional to determine the most appropriate treatment plan for your individual situation.",
+          76
+        );
+
+        const noteLines = noteText.split("\n");
+        for (const line of noteLines) {
+          recommendedProvidersPage.drawText(line, {
+            x: 50,
+            y: recYPosition,
+            size: 10,
+            font: regularFont,
+            color: rgb(0, 0, 0),
+            opacity: 0.8,
+          });
+
+          recYPosition -= 14;
+        }
+      }
+
+      // Always add a page with general mental health resources
+      const resourcesPage = pdfDoc.addPage([550, 750]);
+      const { height: resHeight, width: resWidth } = resourcesPage.getSize();
+      let resourcesYPosition = resHeight - 50;
+
+      // Add the title for resources
+      resourcesPage.drawText("Mental Health Resources", {
+        x: 50,
+        y: resourcesYPosition,
+        size: 18,
+        font: boldFont,
+        color: rgb(0, 0, 0),
+      });
+
+      resourcesYPosition -= 20;
+
+      // Add a line under the title
+      resourcesPage.drawLine({
+        start: { x: 50, y: resourcesYPosition },
+        end: { x: resWidth - 50, y: resourcesYPosition },
+        thickness: 1,
+        color: rgb(0, 0, 0),
+      });
+
+      resourcesYPosition -= 30;
+
+      // Add standard resources text
+      const resourcesText = `Here are some mental health resources that might help:
+
+• National Mental Health Hotline: 988 - Available 24/7 for crisis support
+• Crisis Text Line: Text HOME to 741741 for immediate text-based support
+• BetterHelp: Online therapy platform with licensed professionals (betterhelp.com)
+• Psychology Today: Directory to find therapists in your area (psychologytoday.com/us/therapists)
+• SAMHSA's National Helpline: 1-800-662-4357 - Treatment referral service
+• National Alliance on Mental Illness (NAMI): Support groups and education (nami.org)
+• Mental Health America: Resources and support at mhanational.org`;
+
+      // Apply line wrapping to resources text
+      const wrappedResourcesText = wrapToMaxLength(resourcesText);
+
+      // Split into lines for proper formatting
+      const resourceLines = wrappedResourcesText.split("\n");
+
+      for (const line of resourceLines) {
+        if (resourcesYPosition < 50) {
+          // Add a new page if we're running out of space
+          const newPage = pdfDoc.addPage([550, 750]);
+          resourcesYPosition = newPage.getSize().height - 50;
+        }
+
+        // Check if this is a bullet point line that needs different formatting
+        const isBulletPoint = line.trim().startsWith("•");
+
+        resourcesPage.drawText(line, {
+          x: 50,
+          y: resourcesYPosition,
+          size: isBulletPoint ? 12 : line.trim() === "" ? 10 : 12,
+          font: line.includes("Here are some mental health resources")
+            ? boldFont
+            : regularFont,
+          color: rgb(0, 0, 0),
+        });
+
+        // Add appropriate spacing between lines
+        resourcesYPosition -= line.trim() === "" ? 10 : 20;
+      }
+
+      // Add Final Comments section after resources list
+      resourcesYPosition -= 20; // Add extra space before new section
+
+      // Add the title for final comments
+      resourcesPage.drawText("Final Comments", {
+        x: 50,
+        y: resourcesYPosition,
+        size: 16,
+        font: boldFont,
+        color: rgb(0, 0, 0),
+      });
+
+      resourcesYPosition -= 20;
+
+      // Add a line under the title
+      resourcesPage.drawLine({
+        start: { x: 50, y: resourcesYPosition },
+        end: { x: resWidth - 50, y: resourcesYPosition },
+        thickness: 1,
+        color: rgb(0, 0, 0),
+      });
+
+      resourcesYPosition -= 30;
+
+      // Add personalized final comments if available, otherwise use default
+      const finalMessage =
+        finalComments ||
+        "Remember that reaching out is a sign of strength. Support is always available when you need it.";
+      const wrappedFinalMessage = wrapToMaxLength(finalMessage);
+      const finalMessageLines = wrappedFinalMessage.split("\n");
+
+      for (const line of finalMessageLines) {
+        resourcesPage.drawText(line, {
+          x: 50,
+          y: resourcesYPosition,
+          size: 12,
+          font: regularFont,
+          color: rgb(0, 0, 0),
+        });
+
+        resourcesYPosition -= 20;
+      }
+
+      // Add local mental health services if available
+      if (
+        localMentalHealthServices &&
+        localMentalHealthServices.length > 0 &&
+        userLocation
+      ) {
+        // Use a new page for local resources if needed
+        if (resourcesYPosition < 200) {
+          const localServicesPage = pdfDoc.addPage([550, 750]);
+          resourcesYPosition = localServicesPage.getSize().height - 50;
+        } else {
+          resourcesYPosition -= 30; // Add extra space before local resources section
+        }
+
+        // Add the title for local services
+        resourcesPage.drawText("Local Mental Health Services", {
+          x: 50,
+          y: resourcesYPosition,
+          size: 16,
+          font: boldFont,
+          color: rgb(0, 0, 0),
+        });
+
+        resourcesYPosition -= 20;
+
+        // Add a line under the title
+        resourcesPage.drawLine({
+          start: { x: 50, y: resourcesYPosition },
+          end: { x: resWidth - 50, y: resourcesYPosition },
+          thickness: 1,
+          color: rgb(0, 0, 0),
+        });
+
+        resourcesYPosition -= 30;
+
+        // Add intro text
+        const introText = `Based on your location (approximately ${userLocation.latitude.toFixed(
+          2
+        )}, ${userLocation.longitude.toFixed(
+          2
+        )}), we've found the following mental health services near you:`;
+
+        resourcesPage.drawText(introText, {
+          x: 50,
+          y: resourcesYPosition,
+          size: 12,
+          font: regularFont,
+          color: rgb(0, 0, 0),
+          lineHeight: 14,
+          maxWidth: resWidth - 100,
+        });
+
+        resourcesYPosition -= 40;
+
+        // List each service
+        for (const service of localMentalHealthServices) {
+          // Check if we need a new page
+          if (resourcesYPosition < 100) {
+            const newPage = pdfDoc.addPage([550, 750]);
+            resourcesYPosition = newPage.getSize().height - 50;
+          }
+
+          // Add service name
+          resourcesPage.drawText(service.name || "Mental Health Service", {
+            x: 50,
+            y: resourcesYPosition,
+            size: 14,
+            font: boldFont,
+            color: rgb(0, 0, 0),
+          });
+
+          resourcesYPosition -= 20;
+
+          // Add address if available
+          if (service.address) {
+            resourcesPage.drawText(service.address, {
+              x: 60,
+              y: resourcesYPosition,
+              size: 12,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            resourcesYPosition -= 20;
+          }
+
+          // Add phone if available
+          if (service.phone) {
+            resourcesPage.drawText(`Phone: ${service.phone}`, {
+              x: 60,
+              y: resourcesYPosition,
+              size: 12,
+              font: regularFont,
+              color: rgb(0, 0, 0),
+            });
+
+            resourcesYPosition -= 20;
+          }
+
+          // Add description if available
+          if (service.description) {
+            const descriptionLines = service.description.match(/.{1,70}/g) || [
+              service.description,
+            ];
+            for (const line of descriptionLines) {
+              resourcesPage.drawText(line, {
+                x: 60,
+                y: resourcesYPosition,
+                size: 10,
+                font: regularFont,
+                color: rgb(0, 0, 0),
+              });
+
+              resourcesYPosition -= 15;
+            }
+          }
+
+          resourcesYPosition -= 20; // Extra space between services
+        }
+
+        // Add a note at the bottom
+        resourcesYPosition = Math.max(resourcesYPosition, 50); // Ensure we're not too low on the page
+
+        resourcesPage.drawText(
+          "Note: Please verify service details before visiting. Hours and availability may vary.",
+          {
+            x: 50,
+            y: resourcesYPosition,
+            size: 10,
+            font: regularFont,
+            color: rgb(0, 0, 0),
+            opacity: 0.7,
+          }
+        );
+      }
+
+      // Save the PDF as bytes
+      const pdfBytes = await pdfDoc.save();
+
+      // Convert to base64 for storage and download
+      const base64String = Buffer.from(pdfBytes).toString("base64");
+
+      // Try to store in Supabase if available - only store the text content, not the full PDF
+      try {
+        if (supabase) {
+          // Create a simpler text content object to store instead of the full PDF
+
+          // Store just the text content as JSON
+          const { data, error } = await supabase
+            .from("PDF Summary") // Using a table instead of storage bucket
+            .insert([
+              {
+                pdf: base64String,
+              },
+            ]);
+
+          if (error) {
+            console.error("Supabase storage error:", error);
+          }
+        }
+      } catch (storageError) {
+        console.error("Error storing text in Supabase:", storageError);
+      }
+
+      // Set the PDF URL for download regardless of storage success
+      downloadPDF(base64String);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
     }
+  };
+
+  // Function to generate provider recommendations based on user context
+  const generateRecommendations = (context) => {
+    const recommendations = [];
+
+    // Default recommendations that everyone gets
+    recommendations.push({
+      title: "Primary Care Physician (PCP)",
+      description:
+        "A family doctor who can provide initial evaluation, basic mental health care, and referrals to specialists.",
+      whenToConsider:
+        "Consider as a first step, especially if you're unsure where to start or have related physical health concerns.",
+    });
+
+    // Check for severe symptoms that require immediate attention
+    if (
+      context.symptoms.includes("suicidal") ||
+      context.symptoms.includes("self-harm")
+    ) {
+      recommendations.unshift({
+        title: "Emergency Services / Crisis Care",
+        description:
+          "Immediate care for urgent mental health crises. This includes emergency departments, crisis response teams, and psychiatric emergency services.",
+        whenToConsider:
+          "Seek immediately if you're experiencing thoughts of harming yourself or others, or are in a mental health crisis.",
+      });
+    }
+
+    // Check for concerns that typically benefit from therapy
+    const therapyIndications = [
+      "anxiety",
+      "depression",
+      "grief",
+      "trauma",
+      "relationship",
+      "stress",
+    ];
+    if (
+      context.concerns.some((concern) => therapyIndications.includes(concern))
+    ) {
+      recommendations.push({
+        title: "Licensed Therapist or Counselor",
+        description:
+          "Mental health professionals who provide talk therapy. They help with a wide range of concerns through evidence-based approaches like cognitive-behavioral therapy (CBT), dialectical behavior therapy (DBT), or other modalities.",
+        whenToConsider:
+          "Ideal for addressing anxiety, depression, grief, relationship issues, stress management, and processing life changes or past experiences.",
+      });
+    }
+
+    // Check for conditions that often benefit from psychiatry
+    const psychiatryIndications = [
+      "depression",
+      "anxiety",
+      "bipolar",
+      "ocd",
+      "ptsd",
+      "insomnia",
+    ];
+    if (
+      context.concerns.some((concern) =>
+        psychiatryIndications.includes(concern)
+      ) ||
+      context.preferences.includes("medication")
+    ) {
+      recommendations.push({
+        title: "Psychiatrist",
+        description:
+          "Medical doctors specializing in mental health who can diagnose conditions and prescribe medication. They focus on the biological aspects of mental health and medication management.",
+        whenToConsider:
+          "Consider when symptoms are severe, significantly impact daily functioning, or haven't improved with therapy alone. Particularly helpful for conditions like depression, anxiety disorders, bipolar disorder, ADHD, or psychotic disorders.",
+      });
+    }
+
+    // Trauma-specific providers
+    if (
+      context.concerns.includes("trauma") ||
+      context.concerns.includes("ptsd")
+    ) {
+      recommendations.push({
+        title: "Trauma-Informed Therapist",
+        description:
+          "Specialists trained in addressing trauma through approaches like EMDR (Eye Movement Desensitization and Reprocessing), trauma-focused CBT, or somatic experiencing.",
+        whenToConsider:
+          "Particularly helpful if you've experienced traumatic events and are dealing with symptoms like flashbacks, nightmares, hypervigilance, or avoidance behaviors.",
+      });
+    }
+
+    // Substance use specialists
+    if (
+      context.concerns.includes("substance use") ||
+      context.concerns.includes("addiction")
+    ) {
+      recommendations.push({
+        title: "Addiction Specialist/Substance Use Counselor",
+        description:
+          "Professionals focused on helping people recover from substance use disorders and addictive behaviors through counseling, support groups, and recovery planning.",
+        whenToConsider:
+          "Consider if you're struggling with alcohol, drugs, or other addictive behaviors that are affecting your life, relationships, or health.",
+      });
+    }
+
+    // Group therapy options
+    if (
+      context.symptoms.includes("social isolation") ||
+      context.preferences.includes("group")
+    ) {
+      recommendations.push({
+        title: "Support Groups / Group Therapy",
+        description:
+          "Facilitated groups where people with similar experiences share support and coping strategies. These can be peer-led or professionally moderated.",
+        whenToConsider:
+          "Particularly helpful for building community, reducing isolation, and connecting with others who understand your experiences. Often valuable as a supplement to individual therapy.",
+      });
+    }
+
+    // CBT specialist
+    if (
+      context.preferences.includes("cbt") ||
+      context.concerns.includes("anxiety") ||
+      context.concerns.includes("ocd")
+    ) {
+      recommendations.push({
+        title: "Cognitive-Behavioral Therapist (CBT Specialist)",
+        description:
+          "Therapists specifically trained in cognitive-behavioral therapy, which focuses on identifying and changing unhelpful thought patterns and behaviors.",
+        whenToConsider:
+          "Particularly effective for anxiety disorders, OCD, phobias, and depression. CBT is a structured, goal-oriented approach that typically involves developing specific skills and completing between-session exercises.",
+      });
+    }
+
+    // Consider child/adolescent specialists
+    if (context.demographic.age && context.demographic.age < 18) {
+      recommendations.push({
+        title: "Child/Adolescent Specialist",
+        description:
+          "Mental health professionals with specific training in working with children and teenagers. This might include child psychologists, adolescent psychiatrists, or family therapists.",
+        whenToConsider:
+          "Essential for young people, as they require age-appropriate approaches. These specialists understand developmental stages and how mental health concerns uniquely affect young people.",
+      });
+    }
+
+    // Gender-specific providers if indicated by preferences
+    if (
+      context.preferences.includes("female provider") ||
+      context.preferences.includes("male provider")
+    ) {
+      const genderPref = context.preferences.includes("female provider")
+        ? "female"
+        : "male";
+      recommendations.push({
+        title: `${
+          genderPref.charAt(0).toUpperCase() + genderPref.slice(1)
+        } Mental Health Provider`,
+        description: `Many people feel more comfortable discussing certain issues with a ${genderPref} provider. Most provider directories allow you to filter by gender.`,
+        whenToConsider: `Consider if you have a strong preference for working with a ${genderPref} provider, particularly if discussing sensitive topics or if past experiences make this important for your comfort.`,
+      });
+    }
+
+    return recommendations;
   };
 
   // ==================== If browser not supported ====================
@@ -1045,45 +1980,16 @@ Remember that reaching out is a sign of strength. Support is always available wh
     setPdfUrl(null);
     setCurrentSpeechText("");
 
-    // If location permission is granted but we haven't fetched providers yet, fetch them now
-    if (
-      locationPermission === "granted" &&
-      userLocation &&
-      (!localProviders || localProviders.length === 0)
-    ) {
-      // Don't await this so it can happen in the background
-      fetchLocalMentalHealthProviders().catch((error) => {
-        console.error(
-          "Error fetching local providers during call start:",
-          error
-        );
-        // Allow the call to continue even if this fails
-      });
-    }
+    // Start directly with the name/location question (second question)
+    const firstQuestion =
+      "Hi there! I'm FirstVoice, your supportive companion. I'm here to talk about anything that's on your mind. What's your first name? ";
 
-    // If location permission was previously denied, we could ask them if they want to try again
-    // but we'll leave that for now to not interrupt the conversation flow
+    // Add the question as the first message
+    setCallLog([{ type: "support", text: firstQuestion }]);
+    setConversationHistory([{ role: "assistant", content: firstQuestion }]);
 
-    // Use randomized greeting that asks for name directly
-    const greetings = [
-      "Hello, I'm here to listen and support you. What is your name?",
-      "Hi there, I'm your mental health support assistant. Could you tell me your name?",
-      "Welcome to First Voice AI. I'm here to help. May I know your name?",
-      "Thank you for reaching out today. I'm here to support you. What's your name?",
-      "I'm your mental health assistant. Before we begin, could you share your name with me?",
-      "I'm here to provide support during difficult times. What should I call you?",
-    ];
-
-    // Choose a random greeting
-    const randomGreeting =
-      greetings[Math.floor(Math.random() * greetings.length)];
-
-    // Add the greeting as the first message
-    setCallLog([{ type: "support", text: randomGreeting }]);
-    setConversationHistory([{ role: "assistant", content: randomGreeting }]);
-
-    // Set the greeting for text-to-speech
-    setCurrentSpeechText(randomGreeting);
+    // Set the question for text-to-speech
+    setCurrentSpeechText(firstQuestion);
 
     // Start listening if not muted
     if (!isMute) {
@@ -1153,97 +2059,6 @@ Remember that reaching out is a sign of strength. Support is always available wh
     setPdfUrl(url);
   };
 
-  // Generate and store PDF with conversation summary
-  const generateAndStorePDF = async (summaryText) => {
-    try {
-      // Create a new PDF document
-      const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage();
-      const { width, height } = page.getSize();
-
-      // Load the standard font
-      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-
-      // Set font size and line height
-      const fontSize = 12;
-      const lineHeight = fontSize * 1.5;
-
-      // Split text into sections based on newlines
-      const sections = summaryText.split("\n\n");
-      let y = height - 50;
-
-      for (const section of sections) {
-        // Handle section headers (lines ending with ':')
-        if (section.trim().endsWith(":")) {
-          // Draw header
-          page.drawText(section.trim(), {
-            x: 50,
-            y,
-            size: fontSize + 2,
-            font,
-            color: rgb(0, 0, 0),
-          });
-          y -= lineHeight * 1.5;
-          continue;
-        }
-
-        // Split section into lines
-        const lines = section.split("\n");
-
-        for (const line of lines) {
-          // Skip empty lines
-          if (!line.trim()) {
-            y -= lineHeight;
-            continue;
-          }
-
-          // If we're running out of space, add a new page
-          if (y < 50) {
-            page = pdfDoc.addPage();
-            y = height - 50;
-          }
-
-          // Draw the line
-          page.drawText(line.trim(), {
-            x: 50,
-            y,
-            size: fontSize,
-            font,
-            color: rgb(0, 0, 0),
-          });
-
-          y -= lineHeight;
-        }
-      }
-
-      // Save the PDF
-      const pdfBytes = await pdfDoc.save();
-
-      // Convert to base64
-      const base64PDF = Buffer.from(pdfBytes).toString("base64");
-
-      // Store in Supabase
-      const { data, error } = await supabase.from("PDF Summary").insert([
-        {
-          pdf: base64PDF,
-        },
-      ]);
-
-      if (error) {
-        console.error("Error storing PDF:", error);
-        throw error;
-      }
-
-      console.log("PDF generated and stored successfully:", data);
-
-      // Download the PDF and set the URL
-      downloadPDF(base64PDF);
-      console.log("PDF URL set, download button should appear");
-    } catch (error) {
-      console.error("Error in generateAndStorePDF:", error);
-    }
-  };
-
   // ==================== Render UI ====================
   return (
     <main className="pb-0">
@@ -1257,6 +2072,77 @@ Remember that reaching out is a sign of strength. Support is always available wh
           setCurrentSpeechText("");
         }}
       />
+
+      {/* Geolocation component - no UI */}
+      {shouldRequestLocation && (
+        <Geolocation onLocationUpdate={handleLocationUpdate} />
+      )}
+
+      {/* PDF Download Button - shown whenever PDF is available */}
+      {pdfUrl && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="fixed bottom-8 right-8 z-50"
+        >
+          <motion.a
+            href={pdfUrl}
+            download="mental-health-summary.pdf"
+            className="bg-gradient-to-r from-orange-600 to-orange-500 py-3 px-6 text-white rounded-lg hover:from-orange-500 hover:to-orange-400 shadow-lg flex items-center"
+            whileHover={{
+              scale: 1.05,
+              boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)",
+            }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5 mr-2"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path d="M7 2C5.9 2 5 2.9 5 4V20C5 21.1 5.9 22 7 22H17C18.1 22 19 21.1 19 20V8L13 2H7ZM7 4H12V9H17V20H7V4ZM9 12C9 12.55 9.45 13 10 13H14C14.55 13 15 12.55 15 12C15 11.45 14.55 11 14 11H10C9.45 11 9 11.45 9 12ZM9 16C9 16.55 9.45 17 10 17H14C14.55 17 15 16.55 15 16C15 15.45 14.55 15 14 15H10C9.45 15 9 15.45 9 16Z" />
+            </svg>
+            Download PDF Summary
+          </motion.a>
+        </motion.div>
+      )}
+
+      {/* Show a loading indicator when fetching services or generating PDF */}
+      {(isLoadingServices || isGeneratingPDF) && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed bottom-8 left-8 z-50 bg-blue-600 text-white py-2 px-4 rounded-lg shadow-lg"
+        >
+          <div className="flex items-center">
+            <svg
+              className="animate-spin h-5 w-5 mr-3"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              ></circle>
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            {isGeneratingPDF
+              ? "Generating PDF..."
+              : "Finding local resources..."}
+          </div>
+        </motion.div>
+      )}
 
       {/* Global styles for all animations */}
       <style jsx global>{`
@@ -1285,6 +2171,57 @@ Remember that reaching out is a sign of strength. Support is always available wh
           }
         }
 
+        @keyframes userWave {
+          0% {
+            height: 10px;
+          }
+          50% {
+            height: 80px;
+            transform: scaleY(1);
+          }
+          100% {
+            height: 10px;
+          }
+        }
+
+        @keyframes aiWave {
+          0% {
+            height: 10px;
+            transform: scaleY(0.8);
+          }
+          25% {
+            height: 40px;
+            transform: scaleY(1);
+          }
+          50% {
+            height: 60px;
+            transform: scaleY(1.1);
+          }
+          75% {
+            height: 40px;
+            transform: scaleY(1);
+          }
+          100% {
+            height: 10px;
+            transform: scaleY(0.8);
+          }
+        }
+
+        @keyframes processingWave {
+          0% {
+            height: 5px;
+            width: 8px;
+          }
+          50% {
+            height: 15px;
+            width: 10px;
+          }
+          100% {
+            height: 5px;
+            width: 8px;
+          }
+        }
+
         .audio-wave {
           display: flex;
           align-items: center;
@@ -1297,6 +2234,7 @@ Remember that reaching out is a sign of strength. Support is always available wh
           margin: 0 4px;
           border-radius: 4px;
           background: linear-gradient(180deg, #3b82f6, #10b981);
+          transition: background 0.3s ease;
         }
 
         /* Enhanced background animations */
@@ -1516,7 +2454,6 @@ Remember that reaching out is a sign of strength. Support is always available wh
           >
             Try It!
           </motion.h2>
-
           <div className="w-full h-12"></div>
 
           {/* Conversation box with scroll reveal */}
@@ -1595,77 +2532,6 @@ Remember that reaching out is a sign of strength. Support is always available wh
               </motion.button>
             </div>
 
-            {/* Location indicator */}
-            <div className="flex items-center justify-center mb-2">
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5, duration: 0.5 }}
-                className={`py-1 px-3 rounded-full text-xs flex items-center ${
-                  locationPermission === "granted"
-                    ? "bg-green-500/30 text-green-100"
-                    : locationPermission === "denied"
-                    ? "bg-red-500/30 text-red-100"
-                    : "bg-yellow-500/30 text-yellow-100"
-                }`}
-              >
-                {locationPermission === "granted" ? (
-                  <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-3 w-3 mr-1"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    Location enabled: {locationName || "Your area"}
-                  </>
-                ) : locationPermission === "denied" ? (
-                  <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-3 w-3 mr-1"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                    Location disabled - showing general resources only
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-3 w-3 mr-1 animate-spin"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                    >
-                      <circle
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        strokeWidth="4"
-                        stroke="currentColor"
-                        strokeDasharray="32"
-                        strokeDashoffset="10"
-                      />
-                    </svg>
-                    Requesting location permissions...
-                  </>
-                )}
-              </motion.div>
-            </div>
-
             <div className="w-full h-12"></div>
 
             {/* Call log or visualization */}
@@ -1741,10 +2607,18 @@ Remember that reaching out is a sign of strength. Support is always available wh
               <div className="flex flex-col justify-center items-center h-[380px] w-3/4 max-w-4xl p-7 mt-6 mb-12 font-poppins mx-auto">
                 <div className="text-center mb-8 text-white">
                   {isCallActive ? (
-                    listening ? (
-                      <div className="text-xl font-semibold">Listening...</div>
+                    isSpeaking ? (
+                      <div className="text-xl font-semibold text-green-300">
+                        AI Speaking...
+                      </div>
+                    ) : listening ? (
+                      <div className="text-xl font-semibold text-blue-300">
+                        Listening to you...
+                      </div>
                     ) : (
-                      <div className="text-xl font-semibold">Processing...</div>
+                      <div className="text-xl font-semibold text-purple-300">
+                        Processing...
+                      </div>
                     )
                   ) : (
                     <div className="text-xl font-semibold">
@@ -1758,28 +2632,70 @@ Remember that reaching out is a sign of strength. Support is always available wh
                     {[...Array(16)].map((_, i) => (
                       <motion.div
                         key={i}
-                        className="wave-bar"
+                        className={`wave-bar ${
+                          isSpeaking
+                            ? "bg-gradient-to-t from-green-500 to-green-300"
+                            : listening
+                            ? "bg-gradient-to-t from-blue-500 to-blue-300"
+                            : "bg-gradient-to-t from-purple-500 to-purple-300"
+                        }`}
                         animate={{
                           height: listening
                             ? [10, Math.random() * 70 + 10, 10]
-                            : 10,
+                            : isSpeaking
+                            ? [10, 60, 10]
+                            : [5, 15, 5], // Processing - subtle movement
                         }}
                         transition={{
-                          duration: 1.5,
+                          duration: listening ? 1.2 : isSpeaking ? 0.8 : 2,
                           repeat: Infinity,
-                          delay: i * 0.07,
-                          ease: "easeInOut",
+                          delay:
+                            i * (listening ? 0.05 : isSpeaking ? 0.07 : 0.1),
+                          ease: listening
+                            ? "easeInOut"
+                            : isSpeaking
+                            ? "easeOut"
+                            : "linear",
+                        }}
+                        style={{
+                          animationName: listening
+                            ? "userWave"
+                            : isSpeaking
+                            ? "aiWave"
+                            : "processingWave",
+                          animationDuration: listening
+                            ? "1.2s"
+                            : isSpeaking
+                            ? "0.8s"
+                            : "2s",
+                          animationIterationCount: "infinite",
+                          animationDelay: `${
+                            i * (listening ? 0.05 : isSpeaking ? 0.07 : 0.1)
+                          }s`,
+                          animationTimingFunction: listening
+                            ? "ease-in-out"
+                            : isSpeaking
+                            ? "ease-out"
+                            : "linear",
                         }}
                       />
                     ))}
                   </div>
                 )}
 
-                {/* Last speaker indicator - more subtle without container */}
+                {/* Last speaker indicator with improved visibility */}
                 {isCallActive && callLog.length > 0 && (
-                  <div className="mt-10 text-center text-white/80">
-                    <div className="text-sm mb-2">Last speaker:</div>
-                    <div className="text-lg font-medium">
+                  <div className="mt-10 text-center">
+                    <div className="text-sm mb-2 text-white/80">
+                      Last speaker:
+                    </div>
+                    <div
+                      className={`text-lg font-medium rounded-full px-4 py-1 inline-block ${
+                        callLog[callLog.length - 1].type === "user"
+                          ? "bg-blue-900/30 text-blue-200"
+                          : "bg-green-900/30 text-green-200"
+                      }`}
+                    >
                       {callLog[callLog.length - 1].type === "user"
                         ? "You"
                         : "AI Assistant"}
@@ -1787,15 +2703,33 @@ Remember that reaching out is a sign of strength. Support is always available wh
                   </div>
                 )}
 
-                {/* Status info at bottom - more subtle */}
-                <div className="mt-8 text-center text-sm text-white/60">
-                  {isCallActive
-                    ? listening
-                      ? "Listening for your voice..."
-                      : "Processing your response..."
-                    : "Click 'Start Call' to begin"}
+                {/* Status info at bottom with improved clarity */}
+                <div className="mt-8 text-center text-sm">
+                  {isCallActive ? (
+                    isSpeaking ? (
+                      <span className="text-green-300 font-medium">
+                        AI is speaking
+                      </span>
+                    ) : listening ? (
+                      <span className="text-blue-300 font-medium">
+                        Listening for your voice
+                      </span>
+                    ) : (
+                      <span className="text-purple-300 font-medium">
+                        Processing your response
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-white/60">
+                      Click 'Start Call' to begin
+                    </span>
+                  )}
                   <br />
-                  {isMute && "Audio currently muted"}
+                  {isMute && (
+                    <span className="text-red-300 mt-2 inline-block">
+                      Audio currently muted
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -1926,80 +2860,11 @@ Remember that reaching out is a sign of strength. Support is always available wh
 
             <Modal isOpen={isModal1Open} onClose={() => setModal1Open(false)}>
               <h2 className="text-xl font-bold p-4">Settings</h2>
-
-              {/* Language Settings */}
-              <div className="mb-4 px-4">
-                <div className="font-medium mb-2">Language</div>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="border rounded px-3 py-2 w-full"
-                >
-                  <option value="English">English</option>
-                  <option value="Spanish">Spanish</option>
-                  <option value="French">French</option>
-                </select>
-              </div>
-
-              {/* Location Settings */}
-              <div className="mb-4 px-4">
-                <div className="font-medium mb-2">Location Services</div>
-                <div className="text-sm mb-3 bg-gray-100 p-3 rounded-lg">
-                  {locationPermission === "granted"
-                    ? `✅ Location access is enabled. We can provide local mental health resources near ${
-                        locationName || "your area"
-                      }.`
-                    : locationPermission === "denied"
-                    ? "❌ Location access is currently denied. We can only show general resources."
-                    : "⏳ Location permission status is pending..."}
-                </div>
-
-                <motion.button
-                  onClick={handleRequestLocation}
-                  className={`px-4 py-2 rounded text-white w-full ${
-                    locationPermission === "granted"
-                      ? "bg-green-600 hover:bg-green-700"
-                      : locationPermission === "pending"
-                      ? "bg-yellow-600 hover:bg-yellow-700"
-                      : "bg-blue-600 hover:bg-blue-700"
-                  }`}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  disabled={locationPermission === "pending"}
-                >
-                  {locationPermission === "granted"
-                    ? "Refresh Location"
-                    : locationPermission === "pending"
-                    ? "Requesting Location..."
-                    : "Enable Location Access"}
-                </motion.button>
-
-                <div className="mt-2 text-xs text-gray-500">
-                  Your location is used only to suggest nearby mental health
-                  resources. We do not store or share your precise location
-                  data.
-                </div>
-              </div>
-
-              {/* Location visualization - show if granted */}
-              {locationPermission === "granted" && userLocation && (
-                <div className="px-4 mb-4">
-                  <div className="text-sm mb-2">Your approximate location:</div>
-                  <div className="bg-gray-100 p-4 rounded-lg text-center">
-                    <div className="text-blue-600 font-medium">
-                      {locationName}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Coordinates: {userLocation.latitude.toFixed(4)},{" "}
-                      {userLocation.longitude.toFixed(4)}
-                    </div>
-                  </div>
-                </div>
-              )}
+              <div> Set your Language </div>
             </Modal>
           </motion.div>
-
-          {/* PDF Download Button - Moved after conversation ends */}
+          <div className="w-full h-8"></div>
+          {/* PDF Download Button - Now using floating button instead 
           {pdfUrl && stage === 3 && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -2011,24 +2876,16 @@ Remember that reaching out is a sign of strength. Support is always available wh
                 href={pdfUrl}
                 download="conversation-summary.pdf"
                 className="bg-gradient-to-r from-orange-600 to-orange-500 py-3 px-6 text-white rounded-lg hover:from-orange-500 hover:to-orange-400 shadow-lg flex items-center"
-                whileHover={{
-                  scale: 1.05,
-                  boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)",
-                }}
+                whileHover={{ scale: 1.05, boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)" }}
                 whileTap={{ scale: 0.95 }}
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5 mr-2"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M7 2C5.9 2 5 2.9 5 4V20C5 21.1 5.9 22 7 22H17C18.1 22 19 21.1 19 20V8L13 2H7ZM7 4H12V9H17V20H7V4ZM9 12C9 12.55 9.45 13 10 13H14C14.55 13 15 12.55 15 12C15 11.45 14.55 11 14 11H10C9.45 11 9 11.45 9 12ZM9 16C9 16.55 9.45 17 10 17H14C14.55 17 15 16.55 15 16C15 15.45 14.55 15 14 15H10C9.45 15 9 15.45 9 16Z" />
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7 2C5.9 2 5 2.9 5 4V20C5 21.1 5.9 22 7 22H17C18.1 22 19 21.1 19 20V8L13 2H7ZM7 4H12V9H17V20H7V4ZM9 12C9 12.55 9.45 13 10 13H14C14.55 13 15 12.55 15 12C15 11.45 14.55 11 14 11H10C9.45 11 9 11.45 9 12ZM9 16C9 16.55 9.45 17 10 17H14C14.55 17 15 16.55 15 16C15 15.45 14.55 15 14 15H10C9.45 15 9 15.45 9 16Z"/>
                 </svg>
                 Download Pre Screening Summary as a PDF
               </motion.a>
             </motion.div>
-          )}
+          )} */}
 
           <div className="w-full h-24"></div>
 
