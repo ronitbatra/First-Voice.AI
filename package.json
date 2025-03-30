@@ -1,0 +1,27 @@
+{
+  "name": "first-voice.ai",
+  "version": "1.0.0",
+  "description": "By connecting people with appropriate mental health resources through structured conversation, our AI-driven platform provides a safe space for individuals to express their concerns and receive personalized guidance toward professional mental health services and support networks.",
+  "main": "index.js",
+  "dependencies": {
+    "tr46": "^0.0.3",
+    "undici-types": "^6.20.0",
+    "webidl-conversions": "^3.0.1",
+    "whatwg-url": "^5.0.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ronitbatra/First-Voice.AI.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ronitbatra/First-Voice.AI/issues"
+  },
+  "homepage": "https://github.com/ronitbatra/First-Voice.AI#readme"
+}
