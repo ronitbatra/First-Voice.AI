@@ -4,6 +4,8 @@ import Image from "next/image";
 import Modal from "../components/Modal";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import NavBar from "../components/NavBar.jsx";
+import Footer from "../components/Footer.jsx";
 
 // 1) NEW - import speech recognition
 import SpeechRecognition, {
@@ -539,6 +541,7 @@ export default function Home() {
   // ==================== Render UI ====================
   return (
     <div className="min-h-screen bg-slate-700">
+      <NavBar />
       <div className="flex flex-col items-center">
         <header className="font-bold text-4xl mt-12 font-poppins">
           First Voice AI
@@ -701,6 +704,7 @@ export default function Home() {
           <div> Set your Language </div>
         </Modal>
       </div>
+      <Footer />
     </div>
   );
 }
