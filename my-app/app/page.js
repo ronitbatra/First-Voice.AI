@@ -5,13 +5,62 @@ import Modal from "../components/Modal";
 import NavBar from "../components/NavBar";
 import { useState, useEffect, useRef } from "react";
 import { motion, useInView, useAnimation } from "framer-motion";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { supabase } from "../lib/supabase";
+import {
+  requestLocationPermission,
+  getLocationNameFromCoords,
+  fetchMentalHealthProviders,
+  generateFallbackProviders,
+  formatProvidersForDisplay,
+} from "../components/locationServices";
+
+console.log(1);
 
 // 1) NEW - import speech recognition
 import SpeechRecognition, {
   useSpeechRecognition,
 } from "react-speech-recognition";
+// import Speaker from "../components/speaker";
+import Speaker from "../components/speaker";
 
 export default function Home() {
+  // Animation refs for scroll reveal
+  const headerRef = useRef(null);
+  const subtitleRef = useRef(null);
+  const tryItRef = useRef(null);
+  const conversationBoxRef = useRef(null);
+  const buttonsRef = useRef(null);
+  const missionTitleRef = useRef(null);
+  const missionBoxRef = useRef(null);
+
+  // Check if elements are in view
+  const headerInView = useInView(headerRef, { once: true, amount: 0.3 });
+  const subtitleInView = useInView(subtitleRef, { once: true, amount: 0.3 });
+  const tryItInView = useInView(tryItRef, { once: true, amount: 0.3 });
+  const conversationBoxInView = useInView(conversationBoxRef, {
+    once: true,
+    amount: 0.2,
+  });
+  const buttonsInView = useInView(buttonsRef, { once: true, amount: 0.3 });
+  const missionTitleInView = useInView(missionTitleRef, {
+    once: true,
+    amount: 0.3,
+  });
+  const missionBoxInView = useInView(missionBoxRef, {
+    once: true,
+    amount: 0.3,
+  });
+
+  // Animation controls
+  const headerControls = useAnimation();
+  const subtitleControls = useAnimation();
+  const tryItControls = useAnimation();
+  const conversationBoxControls = useAnimation();
+  const buttonsControls = useAnimation();
+  const missionTitleControls = useAnimation();
+  const missionBoxControls = useAnimation();
+
   // Existing states
   const [language, setLanguage] = useState("English");
   const [isMute, setIsMute] = useState(false);
@@ -44,6 +93,18 @@ export default function Home() {
   // Add state for transcript visibility toggle
   const [showTranscript, setShowTranscript] = useState(true);
 
+  // Add state for location services
+  const [locationPermission, setLocationPermission] = useState("pending"); // "pending", "granted", "denied"
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationName, setLocationName] = useState(null);
+  const [localProviders, setLocalProviders] = useState([]);
+  const [isLoadingProviders, setIsLoadingProviders] = useState(false);
+
+  // New state for PDF and text-to-speech
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [currentSpeechText, setCurrentSpeechText] = useState("");
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
   // ================ react-speech-recognition variables ==================
   const {
     interimTranscript,
@@ -53,6 +114,197 @@ export default function Home() {
     browserSupportsSpeechRecognition,
   } = useSpeechRecognition();
 
+  // Add cleanup for PDF URL when component unmounts
+  useEffect(() => {
+    return () => {
+      if (pdfUrl) {
+        window.URL.revokeObjectURL(pdfUrl);
+      }
+    };
+  }, [pdfUrl]);
+
+  // Request location permission when the app loads
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        setLocationPermission("pending");
+
+        // Request permission to access user's location
+        const coords = await requestLocationPermission();
+        setUserLocation(coords);
+        setLocationPermission("granted");
+
+        // Get location name from coordinates
+        const locationData = await getLocationNameFromCoords(
+          coords.latitude,
+          coords.longitude
+        );
+        if (locationData) {
+          setLocationName(locationData.formattedLocation);
+          console.log(
+            `Location identified as: ${locationData.formattedLocation}`
+          );
+        } else {
+          // If we couldn't get the location name, generate a placeholder
+          const placeholderName = `Area near ${coords.latitude.toFixed(
+            2
+          )}, ${coords.longitude.toFixed(2)}`;
+          setLocationName(placeholderName);
+          console.log(`Using placeholder location: ${placeholderName}`);
+        }
+      } catch (error) {
+        console.error("Location permission error:", error);
+        setLocationPermission("denied");
+      }
+    };
+
+    // Start the location request with a slight delay
+    const timer = setTimeout(() => {
+      getLocation();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Function to fetch mental health providers based on user's location
+  const fetchLocalMentalHealthProviders = async () => {
+    try {
+      if (!userLocation || !locationName) {
+        console.error("Cannot fetch providers: missing location data");
+        return;
+      }
+
+      setIsLoadingProviders(true);
+
+      // Prepare location data
+      const locationData = {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        locationName: locationName,
+      };
+
+      // Fetch providers from API
+      const providers = await fetchMentalHealthProviders(locationData);
+
+      if (providers && providers.length > 0) {
+        setLocalProviders(providers);
+        console.log(
+          `Retrieved ${providers.length} local mental health providers`
+        );
+      } else {
+        // If no providers returned, use fallback
+        const fallbackProviders = generateFallbackProviders(
+          locationName,
+          userLocation.latitude,
+          userLocation.longitude
+        );
+        setLocalProviders(fallbackProviders);
+        console.log(`Using ${fallbackProviders.length} fallback providers`);
+      }
+    } catch (error) {
+      console.error("Error fetching mental health providers:", error);
+
+      // Generate fallback providers on error
+      if (locationName && userLocation) {
+        const fallbackProviders = generateFallbackProviders(
+          locationName,
+          userLocation.latitude,
+          userLocation.longitude
+        );
+        setLocalProviders(fallbackProviders);
+        console.log(
+          `Using ${fallbackProviders.length} fallback providers after error`
+        );
+      }
+    } finally {
+      setIsLoadingProviders(false);
+    }
+  };
+
+  // Function to manually request location permission
+  const handleRequestLocation = async () => {
+    try {
+      setLocationPermission("pending");
+
+      // Request permission to access user's location
+      const coords = await requestLocationPermission();
+      setUserLocation(coords);
+      setLocationPermission("granted");
+
+      // Get location name from coordinates
+      const locationData = await getLocationNameFromCoords(
+        coords.latitude,
+        coords.longitude
+      );
+      if (locationData) {
+        setLocationName(locationData.formattedLocation);
+      } else {
+        // If we couldn't get the location name, generate a placeholder
+        setLocationName(
+          `Area near ${coords.latitude.toFixed(2)}, ${coords.longitude.toFixed(
+            2
+          )}`
+        );
+      }
+
+      // Fetch providers with the new location
+      await fetchLocalMentalHealthProviders();
+    } catch (error) {
+      console.error("Location permission error:", error);
+      setLocationPermission("denied");
+    }
+  };
+
+  // Control speech recognition when AI is speaking to prevent echo
+  useEffect(() => {
+    if (isCallActive) {
+      if (isSpeaking) {
+        // Stop speech recognition while TTS is speaking
+        console.log("TTS speaking - stopping speech recognition");
+        SpeechRecognition.abortListening();
+        resetTranscript();
+      } else if (!isMute) {
+        // Resume speech recognition after a short delay when TTS stops
+        console.log("TTS stopped - resuming speech recognition after delay");
+        const resumeTimer = setTimeout(() => {
+          SpeechRecognition.startListening({
+            continuous: true,
+            interimResults: true,
+          });
+        }, 300); // Short delay to ensure the audio fully stops
+
+        return () => clearTimeout(resumeTimer);
+      }
+    }
+  }, [isSpeaking, isMute, isCallActive, resetTranscript]);
+
+  // Trigger animations when elements come into view
+  useEffect(() => {
+    if (headerInView) headerControls.start({ opacity: 1, y: 0 });
+    if (subtitleInView) subtitleControls.start({ opacity: 1, y: 0 });
+    if (tryItInView) tryItControls.start({ opacity: 1, y: 0 });
+    if (conversationBoxInView)
+      conversationBoxControls.start({ opacity: 1, y: 0 });
+    if (buttonsInView) buttonsControls.start({ opacity: 1, y: 0 });
+    if (missionTitleInView) missionTitleControls.start({ opacity: 1, y: 0 });
+    if (missionBoxInView) missionBoxControls.start({ opacity: 1, y: 0 });
+  }, [
+    headerInView,
+    headerControls,
+    subtitleInView,
+    subtitleControls,
+    tryItInView,
+    tryItControls,
+    conversationBoxInView,
+    conversationBoxControls,
+    buttonsInView,
+    buttonsControls,
+    missionTitleInView,
+    missionTitleControls,
+    missionBoxInView,
+    missionBoxControls,
+  ]);
+
   // Show partial text live as the user speaks
   useEffect(() => {
     setPartialSpeech(interimTranscript);
@@ -60,7 +312,21 @@ export default function Home() {
 
   // Once the user stops speaking → finalTranscript is set
   useEffect(() => {
+    // Skip processing if we're currently speaking or just finished (within 500ms)
+    if (isSpeaking) {
+      console.log("Ignoring transcript while TTS is active:", finalTranscript);
+      resetTranscript();
+      return;
+    }
+
     if (finalTranscript && finalTranscript.trim() !== "") {
+      // Check if this is likely an echo of the AI's message
+      if (isLikelyAIEcho(finalTranscript)) {
+        console.log("Detected AI echo, ignoring:", finalTranscript);
+        resetTranscript();
+        return;
+      }
+
       // Add final transcript to call log
       setCallLog((prev) => [...prev, { type: "user", text: finalTranscript }]);
       // Add user's message to conversation history
@@ -86,7 +352,49 @@ export default function Home() {
     stage,
     currentQuestion,
     showingPersonalHelpQuestion,
+    isSpeaking,
   ]);
+
+  // Function to detect if transcript is likely an echo of AI's recent messages
+  const isLikelyAIEcho = (transcript) => {
+    // Clean the transcript for comparison
+    const cleanedTranscript = transcript.toLowerCase().trim();
+
+    // Get the 5 most recent AI messages
+    const recentAIMessages = callLog
+      .filter((item) => item.type === "support" || item.type === "ai")
+      .slice(-5)
+      .map((item) => item.text.toLowerCase());
+
+    // Check for significant overlap with any recent AI message
+    for (const aiMessage of recentAIMessages) {
+      // Skip very short AI messages as they might cause false positives
+      if (aiMessage.length < 10) continue;
+
+      // If the transcript is a significant portion of an AI message
+      // or the AI message is a significant portion of the transcript
+      if (
+        aiMessage.includes(cleanedTranscript) &&
+        cleanedTranscript.length > 5
+      ) {
+        return true;
+      }
+
+      // Check if transcript contains a significant fragment of the AI message
+      const words = aiMessage.split(" ");
+      if (words.length >= 3) {
+        // Look for 3+ consecutive words from the AI message in the transcript
+        for (let i = 0; i <= words.length - 3; i++) {
+          const phrase = words.slice(i, i + 3).join(" ");
+          if (cleanedTranscript.includes(phrase) && phrase.length > 10) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
+  };
 
   // ==================== Evaluate if an answer is sufficient (local UI check) ====================
   const evaluateAnswerSufficiency = (userText, questionNumber) => {
@@ -140,13 +448,17 @@ export default function Home() {
         generatePersonalHelpQuestion();
       } else {
         // If we've already asked about personal help, just show a closing message
+        const closingMessage =
+          "Thank you for using First Voice. If you'd like to start a new session, please click 'End Call' and then 'Start Call'.";
         setCallLog((prev) => [
           ...prev,
           {
             type: "support",
-            text: "Thank you for using First Voice. If you'd like to start a new session, please click 'End Call' and then 'Start Call'.",
+            text: closingMessage,
           },
         ]);
+        // Set the closing message for text-to-speech
+        setCurrentSpeechText(closingMessage);
       }
       return;
     }
@@ -197,6 +509,9 @@ export default function Home() {
       ]);
       setCallLog((prev) => [...prev, { type: "support", text: data.msg }]);
 
+      // Set the AI response for text-to-speech
+      setCurrentSpeechText(data.msg);
+
       // If answer is insufficient according to the API
       if (data.answerSufficient === false) {
         setRepeatQuestionCount((prev) => prev + 1);
@@ -235,13 +550,17 @@ export default function Home() {
     } catch (error) {
       console.error("API error:", error);
       setLoading(false);
+      const errorMessage =
+        "Sorry, I'm having trouble connecting. Could you try again?";
       setCallLog((prev) => [
         ...prev,
         {
           type: "error",
-          text: "Sorry, I'm having trouble connecting. Could you try again?",
+          text: errorMessage,
         },
       ]);
+      // Set the error message for text-to-speech
+      setCurrentSpeechText(errorMessage);
     }
   };
 
@@ -259,12 +578,29 @@ export default function Home() {
     setLoading(true);
 
     try {
+      // If we have location permission and local providers are not loaded yet, fetch them
+      if (
+        locationPermission === "granted" &&
+        userLocation &&
+        !localProviders.length
+      ) {
+        try {
+          await fetchLocalMentalHealthProviders();
+        } catch (error) {
+          console.error("Error pre-fetching local providers:", error);
+          // Continue with the summary even if fetching providers failed
+        }
+      }
+
       const res2 = await fetch("/api/v1/query", {
         method: "POST",
         body: JSON.stringify({
           problem_description: "Mental health support",
           stage: 2, // Summaries are done in stage 2
           history: history,
+          locationPermission: locationPermission,
+          locationName: locationName,
+          userLocation: userLocation,
         }),
       });
 
@@ -279,14 +615,87 @@ export default function Home() {
 
       const data2 = await res2.json();
 
-      // Final summary text: ensure it's a string
-      let summaryText = "";
+      // Format the summary text with proper structure
+      let triagePoints = "";
       if (typeof data2.triage === "string") {
-        summaryText = data2.triage;
+        triagePoints = data2.triage;
       } else {
         // If triage is an object, convert it to string
-        summaryText = JSON.stringify(data2.triage);
+        triagePoints = JSON.stringify(data2.triage);
       }
+
+      // Process triage points to add line breaks after periods and ensure bullet points
+      const processedTriagePoints = triagePoints
+        .split("\n")
+        .map((point) => {
+          // Split the point text by periods, but keep the periods
+          return point
+            .split(/(\.)/)
+            .map((segment, index, array) => {
+              // If this is a period and not the last item, add a newline after it
+              if (segment === "." && index < array.length - 1) {
+                return segment + "\n";
+              }
+              return segment;
+            })
+            .join("");
+        })
+        .join("\n• ");
+
+      // Wrap long lines to maximum 76 characters per line for PDF formatting
+      const wrapToMaxLength = (text, maxLength = 76) => {
+        const lines = text.split("\n");
+        return lines
+          .map((line) => {
+            // Skip short lines or empty lines
+            if (line.length <= maxLength) return line;
+
+            const wrappedLines = [];
+            let currentLine = "";
+
+            // Split by spaces to avoid breaking words
+            const words = line.split(" ");
+
+            for (const word of words) {
+              // If adding this word exceeds the max length, start a new line
+              if (currentLine.length + word.length + 1 > maxLength) {
+                wrappedLines.push(currentLine);
+                currentLine = word;
+              } else {
+                // Add to current line with a space if not the first word
+                currentLine = currentLine ? `${currentLine} ${word}` : word;
+              }
+            }
+
+            // Add the last line if there's anything left
+            if (currentLine) {
+              wrappedLines.push(currentLine);
+            }
+
+            return wrappedLines.join("\n");
+          })
+          .join("\n");
+      };
+
+      const formattedTriagePoints = wrapToMaxLength(
+        `• ${processedTriagePoints}`
+      );
+
+      const summaryText = `Key Points from Our Conversation:
+${formattedTriagePoints}
+
+Recommendations:
+• Consider exploring coping strategies together
+• Take time to process your feelings
+• Remember that support is available when needed
+
+Next Steps:
+• Review these points at your own pace
+• Reach out if you need additional support
+• Consider connecting with mental health resources in your area`;
+
+      // Generate and store PDF
+      await generateAndStorePDF(summaryText);
 
       // Add the summary response to conversation history
       setConversationHistory((prev) => [
@@ -306,15 +715,24 @@ export default function Home() {
 
       setLoading(false);
 
-      // Display final summary to user
-      setCallLog((prev) => [
-        ...prev,
-        {
-          type: "ai",
-          text: "Based on our conversation, here's my assessment:",
-        },
-        { type: "summary", text: summaryText + providerInfo },
-      ]);
+      // Create a combined message with intro and summary
+      const fullSummaryMessage = `Based on our conversation, here's my assessment: ${summaryText}`;
+
+      // Display final summary to user - simplified display
+      setCallLog((prev) => {
+        // Filter out any "analyzing" or "please hold" messages to avoid redundancy
+        const filteredLog = prev.filter(
+          (entry) =>
+            !entry.text.includes("Let me analyze this information") &&
+            !entry.text.includes("Please hold")
+        );
+
+        // Add the full summary as a single entry
+        return [
+          ...filteredLog,
+          { type: "summary", text: fullSummaryMessage + providerInfo },
+        ];
+      });
 
       // Wait a bit before showing the personal help question
       setTimeout(() => {
@@ -326,13 +744,17 @@ export default function Home() {
     } catch (error) {
       console.error("Final summary API error:", error);
       setLoading(false);
+      const errorMessage =
+        "I'm having trouble processing your information. Our team will reach out to assist you.";
       setCallLog((prev) => [
         ...prev,
         {
           type: "error",
-          text: "I'm having trouble processing your information. Our team will reach out to assist you.",
+          text: errorMessage,
         },
       ]);
+      // Set error message for TTS
+      setCurrentSpeechText(errorMessage);
     }
   };
 
@@ -346,6 +768,8 @@ export default function Home() {
         body: JSON.stringify({
           stage: 3, // Personal help question stage
           history: conversationHistory,
+          locationPermission: locationPermission,
+          locationName: locationName || "your area",
         }),
       });
 
@@ -354,9 +778,23 @@ export default function Home() {
       }
 
       const data = await res.json();
-      const personalHelpQuestion =
-        data.personalHelpQuestion ||
-        "Would you like me to help you find mental health resources in your area?";
+
+      // Create personalized question based on location permission
+      let personalHelpQuestion;
+
+      if (data.personalHelpQuestion) {
+        personalHelpQuestion = data.personalHelpQuestion;
+      } else {
+        // Use default questions based on location permission
+        if (locationPermission === "granted") {
+          personalHelpQuestion = `Would you like me to help you find local mental health resources near ${
+            locationName || "your area"
+          }?`;
+        } else {
+          personalHelpQuestion =
+            "Would you like me to help you find mental health resources? I could suggest local options if you enable location access in settings.";
+        }
+      }
 
       // Add question to conversation
       setConversationHistory((prev) => [
@@ -370,6 +808,9 @@ export default function Home() {
         { type: "support", text: personalHelpQuestion },
       ]);
 
+      // Set the question for text-to-speech
+      setCurrentSpeechText(personalHelpQuestion);
+
       setPersonalHelpAsked(true);
       setShowingPersonalHelpQuestion(true);
       setLoading(false);
@@ -377,9 +818,17 @@ export default function Home() {
       console.error("Personal help question error:", error);
       setLoading(false);
 
-      // Fall back to a default question
-      const defaultQuestion =
-        "Would you like me to help you find mental health resources in your area?";
+      // Fall back to a default question based on location permission
+      let defaultQuestion;
+      if (locationPermission === "granted") {
+        defaultQuestion = `Would you like me to help you find local mental health resources near ${
+          locationName || "your area"
+        }?`;
+      } else {
+        defaultQuestion =
+          "Would you like me to help you find mental health resources? I could suggest local options if you enable location access in settings.";
+      }
+
       setConversationHistory((prev) => [
         ...prev,
         { role: "assistant", content: defaultQuestion },
@@ -388,13 +837,17 @@ export default function Home() {
         ...prev,
         { type: "support", text: defaultQuestion },
       ]);
+
+      // Set the default question for text-to-speech
+      setCurrentSpeechText(defaultQuestion);
+
       setPersonalHelpAsked(true);
       setShowingPersonalHelpQuestion(true);
     }
   };
 
   // Handle user's response to the personal help question
-  const handlePersonalHelpResponse = (response) => {
+  const handlePersonalHelpResponse = async (response) => {
     setShowingPersonalHelpQuestion(false);
     setPersonalHelpResponse(response);
 
@@ -409,47 +862,158 @@ export default function Home() {
       lowerResponse.includes("would like");
 
     if (wantsHelp) {
-      // They want help - provide resources
+      // First, show a loading message
+      const loadingMessage = "Looking up mental health resources for you...";
       setCallLog((prev) => [
         ...prev,
-        {
-          type: "support",
-          text:
-            "Great! Here are some resources that might be helpful:\n\n" +
-            "1. National Mental Health Hotline: 988 - Call or text 24/7\n" +
-            "2. Crisis Text Line: Text HOME to 741741\n" +
-            "3. BetterHelp: Online therapy and counseling\n" +
-            "4. Psychology Today: Directory to find therapists near you\n\n" +
-            "Is there a specific type of resource you're looking for?",
-        },
+        { type: "support", text: loadingMessage },
       ]);
+      setCurrentSpeechText(loadingMessage);
 
-      setConversationHistory((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            "Great! Here are some resources that might be helpful: National Mental Health Hotline (988), Crisis Text Line (Text HOME to 741741), BetterHelp, and Psychology Today's therapist directory. Is there a specific type of resource you're looking for?",
-        },
-      ]);
+      try {
+        // If location is granted but we haven't fetched providers yet, fetch them now
+        if (
+          locationPermission === "granted" &&
+          userLocation &&
+          (!localProviders || localProviders.length === 0)
+        ) {
+          await fetchLocalMentalHealthProviders();
+        }
+
+        // Extract user name
+        let userName = "";
+        for (let i = 0; i < Math.min(5, conversationHistory.length); i++) {
+          const message = conversationHistory[i];
+          if (message.role === "user") {
+            const nameMatch =
+              message.content.match(/my name is (\w+)/i) ||
+              message.content.match(/i(?:')?m (\w+)/i);
+            if (nameMatch && nameMatch[1]) {
+              userName = nameMatch[1];
+              userName =
+                userName.charAt(0).toUpperCase() +
+                userName.slice(1).toLowerCase();
+              break;
+            }
+          }
+        }
+
+        // Extract key concerns
+        const concerns = [];
+        for (const message of conversationHistory) {
+          if (message.role === "user") {
+            const content = message.content.toLowerCase();
+            if (content.includes("depress")) concerns.push("depression");
+            if (content.includes("anxi")) concerns.push("anxiety");
+            if (content.includes("stress")) concerns.push("stress");
+            if (
+              content.includes("grief") ||
+              content.includes("loss") ||
+              content.includes("died")
+            )
+              concerns.push("grief");
+            if (content.includes("family")) concerns.push("family issues");
+            if (content.includes("sleep")) concerns.push("sleep issues");
+          }
+        }
+
+        // Create message intro based on name, concerns, and location
+        let messageIntro = userName ? `${userName}, here` : "Here";
+        const concernsText =
+          concerns.length > 0
+            ? ` specifically for ${concerns.slice(0, 3).join(", ")}`
+            : "";
+
+        let resourcesMessage;
+
+        // Check if we have location permission and local providers
+        if (
+          locationPermission === "granted" &&
+          userLocation &&
+          localProviders.length > 0
+        ) {
+          // Format providers for display
+          const providersText = formatProvidersForDisplay(localProviders);
+
+          // Create location-based resources message
+          resourcesMessage = `${messageIntro} are some mental health resources${concernsText} near ${locationName}:\n\n${providersText}\n\n---\n\nNATIONAL RESOURCES:\n• 📞 National Mental Health Hotline: 988 - Available 24/7 for crisis support\n• 💬 Crisis Text Line: Text HOME to 741741 for immediate text-based support\n• 🌐 SAMHSA's National Helpline: 1-800-662-4357 - Treatment referral service\n• 🔎 Psychology Today Directory: psychologytoday.com/us/therapists\n\nRemember that reaching out is a sign of strength. Support is always available when you need it.`;
+        } else {
+          // Create general resources message (no location)
+          resourcesMessage = `${messageIntro} are some mental health resources that might help${concernsText}:\n\n
+NATIONAL RESOURCES:
+• 📞 National Mental Health Hotline: 988 - Available 24/7 for crisis support
+• 💬 Crisis Text Line: Text HOME to 741741 for immediate text-based support
+• 🌐 BetterHelp: Online therapy platform with licensed professionals (betterhelp.com)
+• 🔎 Psychology Today: Directory to find therapists in your area (psychologytoday.com/us/therapists)
+• 📞 SAMHSA's National Helpline: 1-800-662-4357 - Treatment referral service
+• 🏢 National Alliance on Mental Illness (NAMI): Support groups and education (nami.org)
+• 🌐 Mental Health America: Resources and support at mhanational.org
+
+${
+  locationPermission === "denied"
+    ? "If you enable location permissions, I could provide local resources specific to your area."
+    : ""
+}
+
+Remember that reaching out is a sign of strength. Support is always available when you need it.`;
+        }
+
+        // Add resources to conversation
+        setCallLog((prev) => {
+          // Remove loading message
+          const updatedLog = prev.filter(
+            (entry) => entry.text !== loadingMessage
+          );
+          return [...updatedLog, { type: "support", text: resourcesMessage }];
+        });
+
+        setConversationHistory((prev) => [
+          ...prev,
+          { role: "assistant", content: resourcesMessage },
+        ]);
+
+        // Read the resources aloud
+        setCurrentSpeechText(resourcesMessage);
+      } catch (error) {
+        console.error("Error providing mental health resources:", error);
+
+        // Fallback message if something went wrong
+        const fallbackMessage = `I'm sorry, I encountered an issue retrieving mental health resources. Here are some national resources you can use:\n\n• National Mental Health Hotline: 988 - Available 24/7\n• Crisis Text Line: Text HOME to 741741\n• Psychology Today: Find therapists at psychologytoday.com`;
+
+        setCallLog((prev) => {
+          // Remove loading message
+          const updatedLog = prev.filter(
+            (entry) =>
+              entry.text !== "Looking up mental health resources for you..."
+          );
+          return [...updatedLog, { type: "support", text: fallbackMessage }];
+        });
+
+        setConversationHistory((prev) => [
+          ...prev,
+          { role: "assistant", content: fallbackMessage },
+        ]);
+
+        // Read the fallback message aloud
+        setCurrentSpeechText(fallbackMessage);
+      }
     } else {
-      // They don't want help
+      // They don't want help - acknowledge and end conversation
+      const closingMessage =
+        "I understand. If you ever need resources in the future, don't hesitate to reach out. Thank you for talking with me today.";
+
       setCallLog((prev) => [
         ...prev,
-        {
-          type: "support",
-          text: "I understand. If you ever need resources in the future, don't hesitate to reach out. Thank you for talking with me today.",
-        },
+        { type: "support", text: closingMessage },
       ]);
 
       setConversationHistory((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content:
-            "I understand. If you ever need resources in the future, don't hesitate to reach out. Thank you for talking with me today.",
-        },
+        { role: "assistant", content: closingMessage },
       ]);
+
+      // Read the closing message aloud
+      setCurrentSpeechText(closingMessage);
     }
   };
 
@@ -478,6 +1042,27 @@ export default function Home() {
     setShowingPersonalHelpQuestion(false);
     setPersonalHelpAsked(false);
     setPersonalHelpResponse(null);
+    setPdfUrl(null);
+    setCurrentSpeechText("");
+
+    // If location permission is granted but we haven't fetched providers yet, fetch them now
+    if (
+      locationPermission === "granted" &&
+      userLocation &&
+      (!localProviders || localProviders.length === 0)
+    ) {
+      // Don't await this so it can happen in the background
+      fetchLocalMentalHealthProviders().catch((error) => {
+        console.error(
+          "Error fetching local providers during call start:",
+          error
+        );
+        // Allow the call to continue even if this fails
+      });
+    }
+
+    // If location permission was previously denied, we could ask them if they want to try again
+    // but we'll leave that for now to not interrupt the conversation flow
 
     // Use randomized greeting that asks for name directly
     const greetings = [
@@ -493,9 +1078,12 @@ export default function Home() {
     const randomGreeting =
       greetings[Math.floor(Math.random() * greetings.length)];
 
-    // Set the greeting as the first message
+    // Add the greeting as the first message
     setCallLog([{ type: "support", text: randomGreeting }]);
     setConversationHistory([{ role: "assistant", content: randomGreeting }]);
+
+    // Set the greeting for text-to-speech
+    setCurrentSpeechText(randomGreeting);
 
     // Start listening if not muted
     if (!isMute) {
@@ -549,72 +1137,127 @@ export default function Home() {
     }`;
   };
 
-  // Animation refs for scroll reveal
-  const headerRef = useRef(null);
-  const subtitleRef = useRef(null);
-  const tryItRef = useRef(null);
-  const conversationBoxRef = useRef(null);
-  const buttonsRef = useRef(null);
-  const missionTitleRef = useRef(null);
-  const missionBoxRef = useRef(null);
+  // Function to convert base64 to PDF and set the download URL
+  const downloadPDF = (base64String) => {
+    // Convert base64 to blob
+    const byteCharacters = atob(base64String);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "application/pdf" });
 
-  // Check if elements are in view
-  const headerInView = useInView(headerRef, { once: true, amount: 0.3 });
-  const subtitleInView = useInView(subtitleRef, { once: true, amount: 0.3 });
-  const tryItInView = useInView(tryItRef, { once: true, amount: 0.3 });
-  const conversationBoxInView = useInView(conversationBoxRef, {
-    once: true,
-    amount: 0.2,
-  });
-  const buttonsInView = useInView(buttonsRef, { once: true, amount: 0.3 });
-  const missionTitleInView = useInView(missionTitleRef, {
-    once: true,
-    amount: 0.3,
-  });
-  const missionBoxInView = useInView(missionBoxRef, {
-    once: true,
-    amount: 0.3,
-  });
+    // Create URL for the blob and update state
+    const url = window.URL.createObjectURL(blob);
+    setPdfUrl(url);
+  };
 
-  // Animation controls
-  const headerControls = useAnimation();
-  const subtitleControls = useAnimation();
-  const tryItControls = useAnimation();
-  const conversationBoxControls = useAnimation();
-  const buttonsControls = useAnimation();
-  const missionTitleControls = useAnimation();
-  const missionBoxControls = useAnimation();
+  // Generate and store PDF with conversation summary
+  const generateAndStorePDF = async (summaryText) => {
+    try {
+      // Create a new PDF document
+      const pdfDoc = await PDFDocument.create();
+      const page = pdfDoc.addPage();
+      const { width, height } = page.getSize();
 
-  // Trigger animations when elements come into view
-  useEffect(() => {
-    if (headerInView) headerControls.start({ opacity: 1, y: 0 });
-    if (subtitleInView) subtitleControls.start({ opacity: 1, y: 0 });
-    if (tryItInView) tryItControls.start({ opacity: 1, y: 0 });
-    if (conversationBoxInView)
-      conversationBoxControls.start({ opacity: 1, y: 0 });
-    if (buttonsInView) buttonsControls.start({ opacity: 1, y: 0 });
-    if (missionTitleInView) missionTitleControls.start({ opacity: 1, y: 0 });
-    if (missionBoxInView) missionBoxControls.start({ opacity: 1, y: 0 });
-  }, [
-    headerInView,
-    headerControls,
-    subtitleInView,
-    subtitleControls,
-    tryItInView,
-    tryItControls,
-    conversationBoxInView,
-    conversationBoxControls,
-    buttonsInView,
-    buttonsControls,
-    missionTitleInView,
-    missionTitleControls,
-    missionBoxInView,
-    missionBoxControls,
-  ]);
+      // Load the standard font
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+      // Set font size and line height
+      const fontSize = 12;
+      const lineHeight = fontSize * 1.5;
+
+      // Split text into sections based on newlines
+      const sections = summaryText.split("\n\n");
+      let y = height - 50;
+
+      for (const section of sections) {
+        // Handle section headers (lines ending with ':')
+        if (section.trim().endsWith(":")) {
+          // Draw header
+          page.drawText(section.trim(), {
+            x: 50,
+            y,
+            size: fontSize + 2,
+            font,
+            color: rgb(0, 0, 0),
+          });
+          y -= lineHeight * 1.5;
+          continue;
+        }
+
+        // Split section into lines
+        const lines = section.split("\n");
+
+        for (const line of lines) {
+          // Skip empty lines
+          if (!line.trim()) {
+            y -= lineHeight;
+            continue;
+          }
+
+          // If we're running out of space, add a new page
+          if (y < 50) {
+            page = pdfDoc.addPage();
+            y = height - 50;
+          }
+
+          // Draw the line
+          page.drawText(line.trim(), {
+            x: 50,
+            y,
+            size: fontSize,
+            font,
+            color: rgb(0, 0, 0),
+          });
+
+          y -= lineHeight;
+        }
+      }
+
+      // Save the PDF
+      const pdfBytes = await pdfDoc.save();
+
+      // Convert to base64
+      const base64PDF = Buffer.from(pdfBytes).toString("base64");
+
+      // Store in Supabase
+      const { data, error } = await supabase.from("PDF Summary").insert([
+        {
+          pdf: base64PDF,
+        },
+      ]);
+
+      if (error) {
+        console.error("Error storing PDF:", error);
+        throw error;
+      }
+
+      console.log("PDF generated and stored successfully:", data);
+
+      // Download the PDF and set the URL
+      downloadPDF(base64PDF);
+      console.log("PDF URL set, download button should appear");
+    } catch (error) {
+      console.error("Error in generateAndStorePDF:", error);
+    }
+  };
 
   // ==================== Render UI ====================
   return (
     <main className="pb-0">
+      {/* Add the Speaker component */}
+      <Speaker
+        text={currentSpeechText}
+        isMute={isMute}
+        onPlaybackStart={() => setIsSpeaking(true)}
+        onPlaybackEnd={() => {
+          setIsSpeaking(false);
+          setCurrentSpeechText("");
+        }}
+      />
+
       {/* Global styles for all animations */}
       <style jsx global>{`
         @keyframes gradient {
@@ -898,6 +1541,7 @@ export default function Home() {
                 </div>
               </div>
             )}
+            <div className="w-full h-12"></div>
 
             {/* Add toggle switch for transcript/visualization mode */}
             <div className="flex items-center justify-center mb-4 gap-4">
@@ -949,6 +1593,77 @@ export default function Home() {
                 </svg>
                 Voice Only
               </motion.button>
+            </div>
+
+            {/* Location indicator */}
+            <div className="flex items-center justify-center mb-2">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5, duration: 0.5 }}
+                className={`py-1 px-3 rounded-full text-xs flex items-center ${
+                  locationPermission === "granted"
+                    ? "bg-green-500/30 text-green-100"
+                    : locationPermission === "denied"
+                    ? "bg-red-500/30 text-red-100"
+                    : "bg-yellow-500/30 text-yellow-100"
+                }`}
+              >
+                {locationPermission === "granted" ? (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-3 w-3 mr-1"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    Location enabled: {locationName || "Your area"}
+                  </>
+                ) : locationPermission === "denied" ? (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-3 w-3 mr-1"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    Location disabled - showing general resources only
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-3 w-3 mr-1 animate-spin"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                    >
+                      <circle
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        strokeWidth="4"
+                        stroke="currentColor"
+                        strokeDasharray="32"
+                        strokeDashoffset="10"
+                      />
+                    </svg>
+                    Requesting location permissions...
+                  </>
+                )}
+              </motion.div>
             </div>
 
             <div className="w-full h-12"></div>
@@ -1211,30 +1926,120 @@ export default function Home() {
 
             <Modal isOpen={isModal1Open} onClose={() => setModal1Open(false)}>
               <h2 className="text-xl font-bold p-4">Settings</h2>
-              <div> Set your Language </div>
+
+              {/* Language Settings */}
+              <div className="mb-4 px-4">
+                <div className="font-medium mb-2">Language</div>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  className="border rounded px-3 py-2 w-full"
+                >
+                  <option value="English">English</option>
+                  <option value="Spanish">Spanish</option>
+                  <option value="French">French</option>
+                </select>
+              </div>
+
+              {/* Location Settings */}
+              <div className="mb-4 px-4">
+                <div className="font-medium mb-2">Location Services</div>
+                <div className="text-sm mb-3 bg-gray-100 p-3 rounded-lg">
+                  {locationPermission === "granted"
+                    ? `✅ Location access is enabled. We can provide local mental health resources near ${
+                        locationName || "your area"
+                      }.`
+                    : locationPermission === "denied"
+                    ? "❌ Location access is currently denied. We can only show general resources."
+                    : "⏳ Location permission status is pending..."}
+                </div>
+
+                <motion.button
+                  onClick={handleRequestLocation}
+                  className={`px-4 py-2 rounded text-white w-full ${
+                    locationPermission === "granted"
+                      ? "bg-green-600 hover:bg-green-700"
+                      : locationPermission === "pending"
+                      ? "bg-yellow-600 hover:bg-yellow-700"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={locationPermission === "pending"}
+                >
+                  {locationPermission === "granted"
+                    ? "Refresh Location"
+                    : locationPermission === "pending"
+                    ? "Requesting Location..."
+                    : "Enable Location Access"}
+                </motion.button>
+
+                <div className="mt-2 text-xs text-gray-500">
+                  Your location is used only to suggest nearby mental health
+                  resources. We do not store or share your precise location
+                  data.
+                </div>
+              </div>
+
+              {/* Location visualization - show if granted */}
+              {locationPermission === "granted" && userLocation && (
+                <div className="px-4 mb-4">
+                  <div className="text-sm mb-2">Your approximate location:</div>
+                  <div className="bg-gray-100 p-4 rounded-lg text-center">
+                    <div className="text-blue-600 font-medium">
+                      {locationName}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Coordinates: {userLocation.latitude.toFixed(4)},{" "}
+                      {userLocation.longitude.toFixed(4)}
+                    </div>
+                  </div>
+                </div>
+              )}
             </Modal>
           </motion.div>
-        </div>
 
-        <div className="w-full h-8"></div>
-        <div className="w-full h-8"></div>
+          {/* PDF Download Button - Moved after conversation ends */}
+          {pdfUrl && stage === 3 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="flex justify-center mt-4 mb-16"
+            >
+              <motion.a
+                href={pdfUrl}
+                download="conversation-summary.pdf"
+                className="bg-gradient-to-r from-orange-600 to-orange-500 py-3 px-6 text-white rounded-lg hover:from-orange-500 hover:to-orange-400 shadow-lg flex items-center"
+                whileHover={{
+                  scale: 1.05,
+                  boxShadow: "0 10px 25px rgba(0, 0, 0, 0.2)",
+                }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 mr-2"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M7 2C5.9 2 5 2.9 5 4V20C5 21.1 5.9 22 7 22H17C18.1 22 19 21.1 19 20V8L13 2H7ZM7 4H12V9H17V20H7V4ZM9 12C9 12.55 9.45 13 10 13H14C14.55 13 15 12.55 15 12C15 11.45 14.55 11 14 11H10C9.45 11 9 11.45 9 12ZM9 16C9 16.55 9.45 17 10 17H14C14.55 17 15 16.55 15 16C15 15.45 14.55 15 14 15H10C9.45 15 9 15.45 9 16Z" />
+                </svg>
+                Download Pre Screening Summary as a PDF
+              </motion.a>
+            </motion.div>
+          )}
 
-        {/* Mission section with scroll reveal */}
-        <div
-          id="mission"
-          className="w-full py-24 mt-24 relative scroll-mt-24"
-          style={{
-            background:
-              "linear-gradient(180deg, rgba(30,58,138,0) 0%, rgba(30,58,138,0.05) 100%)",
-          }}
-        >
-          {/* Mission title with scroll reveal */}
+          <div className="w-full h-24"></div>
+
+          {/* Mission Title */}
           <motion.h2
             ref={missionTitleRef}
+            id="mission"
             initial={{ opacity: 0, y: 30 }}
             animate={missionTitleControls}
             transition={{ duration: 0.8, ease: "easeOut" }}
-            className="text-5xl font-bold mb-28 font-poppins drop-shadow-md relative text-center"
+            className="text-5xl font-bold mb-12 font-poppins drop-shadow-md relative text-center scroll-mt-24"
             style={{
               backgroundImage:
                 "linear-gradient(-45deg, #9333ea, #3b82f6, #10b981)",
@@ -1247,10 +2052,16 @@ export default function Home() {
           >
             Our Mission
           </motion.h2>
+        </div>
 
-          {/* Add extra vertical spacing */}
-          <div className="w-full h-12"></div>
-
+        {/* Mission section with scroll reveal */}
+        <div
+          className="w-full py-12 relative"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(30,58,138,0) 0%, rgba(30,58,138,0.05) 100%)",
+          }}
+        >
           {/* Mission box with scroll reveal */}
           <div className="flex justify-center mb-16">
             <motion.div
