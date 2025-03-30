@@ -24,19 +24,19 @@ export async function POST(req) {
       const reverseGeocode = await fetch(
         `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`
       );
-
+      
       if (reverseGeocode.ok) {
         const geoData = await reverseGeocode.json();
-
+        
         if (geoData && geoData.display_name) {
           const locationParts = [
             geoData.address?.city,
             geoData.address?.town,
             geoData.address?.county,
             geoData.address?.state,
-            geoData.address?.country,
+            geoData.address?.country
           ].filter(Boolean);
-
+          
           locationName = locationParts.join(", ") || locationName;
         }
       }
@@ -47,69 +47,61 @@ export async function POST(req) {
 
     // Search for mental health services using OpenAI
     const searchQuery = `top rated mental health services with contact information in ${locationName}`;
-
+    
     try {
       // Try using the web search feature if available
       try {
         const webSearchResults = await openai.browse.search({
-          query: searchQuery,
+          query: searchQuery
         });
-
-        if (
-          webSearchResults &&
-          webSearchResults.search_results &&
-          webSearchResults.search_results.length > 0
-        ) {
+        
+        if (webSearchResults && webSearchResults.search_results && webSearchResults.search_results.length > 0) {
           // Process the web search results
-          const services = webSearchResults.search_results
-            .slice(0, 5)
-            .map((result) => {
-              return {
-                name: result.title || "Mental Health Service",
-                phone: "Contact for details", // Often not directly in search results
-                address: result.url || "See website for details",
-                description:
-                  result.snippet || "Provides mental health services",
-              };
-            });
-
+          const services = webSearchResults.search_results.slice(0, 5).map(result => {
+            return {
+              name: result.title || "Mental Health Service",
+              phone: "Contact for details", // Often not directly in search results
+              address: result.url || "See website for details",
+              description: result.snippet || "Provides mental health services"
+            };
+          });
+          
           return NextResponse.json({
             services,
             location: locationName,
-            source: "web_search",
+            source: "web_search"
           });
         }
       } catch (webSearchError) {
         console.error("Web search not available:", webSearchError);
         // Continue to fallback method
       }
-
+      
       // If web search failed or is unavailable, use the chat API with domain knowledge
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content:
-              "You are a helpful assistant providing information about mental health services. Format your response as a valid JSON object with a 'services' array containing 3-5 services.",
+            content: "You are a helpful assistant providing information about mental health services. Format your response as a valid JSON object with a 'services' array containing 3-5 services."
           },
           {
             role: "user",
-            content: `Please find 3-5 mental health services (therapy, counseling, and psychiatry) in ${locationName}. For each service, include the name, phone number, address, and a brief description. Format the output as a JSON object with a "services" array where each item has "name", "phone", "address", and "description" fields. Do not include any explanatory text outside the JSON.`,
-          },
+            content: `Please find 3-5 mental health services (therapy, counseling, and psychiatry) in ${locationName}. For each service, include the name, phone number, address, and a brief description. Format the output as a JSON object with a "services" array where each item has "name", "phone", "address", and "description" fields. Do not include any explanatory text outside the JSON.`
+          }
         ],
-        response_format: { type: "json_object" },
+        response_format: { type: "json_object" }
       });
-
+      
       const content = response.choices[0].message.content;
       let parsedContent;
-
+      
       try {
         parsedContent = JSON.parse(content);
-        return NextResponse.json({
+        return NextResponse.json({ 
           services: parsedContent.services || [],
           location: locationName,
-          source: "generated_data",
+          source: "generated_data"
         });
       } catch (parseError) {
         console.error("Error parsing JSON from OpenAI response:", parseError);
@@ -117,37 +109,34 @@ export async function POST(req) {
       }
     } catch (error) {
       console.error("Error searching for mental health services:", error);
-
+      
       // Fallback to mock data if all other methods fail
       const fallbackServices = [
         {
           name: "Community Mental Health Center",
           phone: "(555) 123-4567",
           address: `Near ${locationName}`,
-          description:
-            "Offering therapy, counseling, and psychiatric services on a sliding fee scale.",
+          description: "Offering therapy, counseling, and psychiatric services on a sliding fee scale."
         },
         {
           name: "Mindful Wellness Clinic",
           phone: "(555) 987-6543",
           address: `Near ${locationName}`,
-          description:
-            "Specialized in cognitive behavioral therapy and stress management.",
+          description: "Specialized in cognitive behavioral therapy and stress management."
         },
         {
           name: "Regional Psychiatric Services",
           phone: "(555) 456-7890",
           address: `Near ${locationName}`,
-          description:
-            "Comprehensive psychiatric care including medication management.",
-        },
+          description: "Comprehensive psychiatric care including medication management."
+        }
       ];
-
-      return NextResponse.json({
+      
+      return NextResponse.json({ 
         services: fallbackServices,
         location: locationName,
         note: "Using fallback data due to search error",
-        source: "fallback_data",
+        source: "fallback_data"
       });
     }
   } catch (error) {
@@ -157,4 +146,4 @@ export async function POST(req) {
       { status: 500 }
     );
   }
-}
+} 

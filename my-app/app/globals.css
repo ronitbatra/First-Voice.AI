@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: linear-gradient(135deg, #2c3e50, #3498db, #87ceeb);
+  --background: linear-gradient(135deg, #2c3e50, #3498db, #87CEEB);
   --foreground: #ffffff;
   --footer-bg: rgba(18, 30, 43, 0.9);
   --footer-text: #ecf0f1;
@@ -84,10 +84,6 @@ a:hover {
 
 /* Grid background pattern */
 .bg-grid-white {
-  background-image: linear-gradient(
-      to right,
-      rgba(255, 255, 255, 0.1) 1px,
-      transparent 1px
-    ),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
 }

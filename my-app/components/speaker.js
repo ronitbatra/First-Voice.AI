@@ -11,7 +11,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
 
   // Check if we're in a browser environment
   useEffect(() => {
-    setIsBrowser(typeof window !== "undefined");
+    setIsBrowser(typeof window !== 'undefined');
   }, []);
 
   // Voice ID for Emily voice in Eleven Labs
@@ -19,13 +19,12 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
   const MODEL_ID = "eleven_turbo_v2"; // Eleven Flash 2.5 model
 
   // Eleven Labs API key
-  const ELEVEN_LABS_API_KEY =
-    process.env.NEXT_PUBLIC_ELEVEN_LABS_API_KEY || "your_api_key_here";
+  const ELEVEN_LABS_API_KEY = process.env.NEXT_PUBLIC_ELEVEN_LABS_API_KEY || "your_api_key_here";
 
   useEffect(() => {
     // If new text arrives and not muted, convert to speech
     if (text && text.trim() !== "" && !isMute && isBrowser) {
-      setAudioQueue((prevQueue) => [...prevQueue, text]);
+      setAudioQueue(prevQueue => [...prevQueue, text]);
     }
   }, [text, isMute, isBrowser]);
 
@@ -42,7 +41,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
 
       // Take the first text from the queue
       const nextText = audioQueue[0];
-      setAudioQueue((prevQueue) => prevQueue.slice(1));
+      setAudioQueue(prevQueue => prevQueue.slice(1));
 
       // Skip if text is empty or we're muted
       if (!nextText || nextText.trim() === "" || isMute) {
@@ -55,7 +54,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
 
         // Convert text to speech using Eleven Labs API
         const audioUrl = await convertTextToSpeech(nextText);
-
+        
         if (audioUrl) {
           currentAudioUrlRef.current = audioUrl;
           playAudio(audioUrl);
@@ -73,14 +72,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
     };
 
     processQueue();
-  }, [
-    audioQueue,
-    isPlaying,
-    isMute,
-    onPlaybackStart,
-    onPlaybackEnd,
-    isBrowser,
-  ]);
+  }, [audioQueue, isPlaying, isMute, onPlaybackStart, onPlaybackEnd, isBrowser]);
 
   // Clean up audio URLs when component unmounts
   useEffect(() => {
@@ -111,10 +103,10 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
             text: text,
             model_id: MODEL_ID,
             voice_settings: {
-              stability: 0.7, // Increased for clearer speech
-              similarity_boost: 0.7, // Increased for more consistent voice
-              style: 0.5, // Balanced style
-              use_speaker_boost: true, // Enable speaker boost
+              stability: 0.7,         // Increased for clearer speech
+              similarity_boost: 0.7,  // Increased for more consistent voice
+              style: 0.5,             // Balanced style
+              use_speaker_boost: true // Enable speaker boost
             },
           }),
         }
@@ -122,9 +114,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
 
       if (!response.ok) {
         const errorData = await response.text();
-        throw new Error(
-          `Eleven Labs API error: ${response.status} - ${errorData}`
-        );
+        throw new Error(`Eleven Labs API error: ${response.status} - ${errorData}`);
       }
 
       // Get audio as blob
@@ -145,7 +135,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
     // Set audio properties for optimal playback
     audioRef.current.src = audioUrl;
     audioRef.current.volume = 0.8; // Slightly lower volume to reduce mic pickup
-
+    
     audioRef.current.play().catch((error) => {
       console.error("Error playing audio:", error);
       setIsPlaying(false);
@@ -157,7 +147,7 @@ const Speaker = ({ text, isMute, onPlaybackStart, onPlaybackEnd }) => {
   const handleAudioEnded = () => {
     setIsPlaying(false);
     if (onPlaybackEnd) onPlaybackEnd();
-
+    
     // Clean up current audio URL
     if (isBrowser && currentAudioUrlRef.current) {
       URL.revokeObjectURL(currentAudioUrlRef.current);
