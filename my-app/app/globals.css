@@ -1,8 +1,12 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: linear-gradient(135deg, #2c3e50, #3498db, #87ceeb);
+  --foreground: #ffffff;
+  --footer-bg: rgba(18, 30, 43, 0.9);
+  --footer-text: #ecf0f1;
+  --accent-color: #3498db;
+  --accent-hover: #2ecc71;
 }
 
 @theme inline {
@@ -10,17 +14,80 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-poppins: var(--font-poppins);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: linear-gradient(135deg, #12283a, #1e3a8a, #1e40af);
+    --foreground: #f1f5f9;
+    --footer-bg: rgba(10, 20, 30, 0.95);
+    --footer-text: #ecf0f1;
   }
 }
 
 body {
   background: var(--background);
+  background-size: 400% 400%;
+  animation: gradientAnimation 15s ease infinite;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+}
+
+@keyframes gradientAnimation {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Makes footer stick to bottom without extra space */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Remove default margins that might cause spacing */
+* {
+  margin-block-end: 0;
+  margin-block-start: 0;
+}
+
+/* General link hover effects */
+a {
+  transition: color 0.3s ease;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* Card-style elements for better contrast against gradient */
+.card {
+  background-color: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+/* Grid background pattern */
+.bg-grid-white {
+  background-image: linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.1) 1px,
+      transparent 1px
+    ),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
 }
