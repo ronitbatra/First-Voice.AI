@@ -2424,9 +2424,9 @@ Next Steps:
             transition={{ duration: 0.8, delay: 0.3, ease: "easeOut" }}
             className="font-poppins text-white/80 mb-24 max-w-2xl text-center"
           >
-            Connecting people with appropriate mental health resources through
-            structured conversation. Our AI-driven platform provides a safe
-            space for individuals to express their concerns and receive
+            By connecting people with appropriate mental health resources
+            through structured conversation, our AI-driven platform provides a
+            safe space for individuals to express their concerns and receive
             personalized guidance toward professional mental health services and
             support networks.
           </motion.div>
@@ -2932,16 +2932,13 @@ Next Steps:
               }}
             >
               <p className="text-white/90 leading-relaxed text-lg mb-5 tracking-wide px-2">
-                A compassionate mental health support assistant that provides a
-                safe space for emotional support and connects people with
-                appropriate mental health resources through structured
-                conversation.
-              </p>
-              <p className="text-white/80 leading-relaxed text-base tracking-wide px-2">
-                We believe that everyone deserves access to mental health
-                support in moments of need. Our AI-powered platform serves as a
-                bridge between those seeking help and the professional resources
-                available to them.
+                We aim to be a compassionate mental health support assistant
+                that provides a safe space for emotional support and connects
+                people with appropriate mental health resources through
+                empathetic conversation. We believe that everyone deserves
+                access to mental health support in moments of need. Our
+                AI-powered platform serves as a bridge between those seeking
+                help and the professional resources available to them.
               </p>
             </motion.div>
           </div>

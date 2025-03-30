@@ -27,14 +27,14 @@ const teamMembers = [
     role: "University of Virginia",
     image: "/team/Sagun.png",
     linkedin: "https://www.linkedin.com/in/sagun-venuganti",
-    github: "https://github.com/svenuganti",
+    github: "https://github.com/sagunvenuganti",
   },
   {
     name: "Phlobater Habshy",
     role: "Virginia Tech",
     image: "/team/phlo2.jpg",
     linkedin: "https://www.linkedin.com/in/phlobater-habshy-371087312",
-    github: "https://github.com/phlohabshy",
+    github: "https://github.com/PhlioHabshy",
   },
 ];
 
