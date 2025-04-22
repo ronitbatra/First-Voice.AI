@@ -12,7 +12,7 @@ First-Voice.AI is an AI-driven web application that provides a safe space for in
 ## Tech Stack
 - **Frontend:** React.js  
 - **Backend:** Node.js with Express.js  
-- **Database:** Supabase / Firebase (or any cloud-based solution)  
+- **Database:** Supabase
 - **AI Models:** OpenAI API (for NLP processing)  
 - **Deployment:** Vercel / AWS / Render  
 
