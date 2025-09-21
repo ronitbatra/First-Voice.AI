@@ -53,11 +53,196 @@ graph TD
 my-app/app/api/
 ├── route.js                    # Legacy Milvus vector search endpoint
 └── v1/
-    ├── query/route.js          # Main conversation handler
+    ├── query/route.js          # Main conversation handler (stage-based routing)
     ├── doctorRecommendations/route.js  # AI-generated provider recommendations
     ├── searchServices/route.js # Location-based mental health services
     └── resources/route.js      # Mental health resource compilation
 ```
+
+### API Route Details
+
+#### `/api/v1/query` - Primary Conversation Engine
+**Method**: POST  
+**Purpose**: Handles all conversation phases through stage-based routing  
+**Authentication**: None (anonymous)
+
+**Request Body Parameters:**
+| Parameter | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `stage` | number | Yes | Determines API behavior: `1` (conversation), `2` (summary), `3` (personal help) |
+| `problem_description` | string | Conditional | Initial problem description (stages 1-2) |
+| `last_reply` | string | Stage 1 only | User's most recent response |
+| `history` | array | Yes | Full conversation history as `{role, content}` objects |
+| `questionNumber` | number | Stage 1 only | Current question (1-6) |
+| `answerSufficient` | boolean | Stage 1 only | Whether previous answer was adequate |
+
+**Stage-Based Routing:**
+```javascript
+switch (req_json.stage) {
+  case 1: // 6-question structured conversation flow
+    // Handles question progression, answer validation, retry logic
+    // Returns: {msg, questionNumber, answerSufficient, moveTo?, askForProviders?}
+    
+  case 2: // Summary generation with vector search
+    // Uses Milvus for context + OpenAI for structured summary
+    // Returns: {triage, location?, openToHelp?}
+    
+  case 3: // Dynamic personal help question generation
+    // Personalized based on conversation context
+    // Returns: {personalHelpQuestion}
+}
+```
+
+**Response Examples:**
+```javascript
+// Stage 1 - Continue conversation
+{
+  "msg": "Thanks for sharing that. When did you first notice feeling this way?",
+  "questionNumber": 3,
+  "answerSufficient": true
+}
+
+// Stage 1 - Trigger summary
+{
+  "msg": "Thank you for sharing. Let me analyze this information...",
+  "questionNumber": 6,
+  "moveTo": "summary",
+  "askForProviders": true
+}
+
+// Stage 2 - Summary response
+{
+  "triage": "• 1) PRESENTING CONCERNS: [analysis]...",
+  "location": "their area",
+  "openToHelp": false
+}
+```
+
+#### `/api/v1/doctorRecommendations` - Personalized Provider Matching
+**Method**: POST  
+**Purpose**: Generate AI-powered healthcare provider recommendations  
+**Model**: OpenAI GPT-4o (higher capability model)
+
+**Request Body:**
+```javascript
+{
+  "summary": "Conversation summary text",
+  "userContext": {
+    "concerns": ["anxiety", "depression"],
+    "symptoms": ["fatigue", "sleep issues"],
+    "demographic": {
+      "age": 25,
+      "gender": "female",
+      "location": "Seattle"
+    },
+    "name": "Sarah"
+  }
+}
+```
+
+**Response:**
+```javascript
+{
+  "finalComments": "Personalized closing message with hope and validation",
+  "doctorRecommendations": [
+    {
+      "providerType": "Licensed Clinical Social Worker (LCSW)",
+      "rationale": "Why this provider type fits the user's needs",
+      "expectations": "What to expect from this type of care",
+      "credentials": "Relevant credentials to look for"
+    }
+  ]
+}
+```
+
+#### `/api/v1/searchServices` - Location-Based Service Discovery
+**Method**: POST  
+**Purpose**: Find mental health services near user's location  
+**Integrations**: OpenStreetMap (reverse geocoding), OpenAI (service search)
+
+**Request Body:**
+```javascript
+{
+  "latitude": 47.6062,
+  "longitude": -122.3321
+}
+```
+
+**Process Flow:**
+1. **Reverse Geocoding**: Convert coordinates to location name via Nominatim API
+2. **Service Search**: Use OpenAI to find mental health services in area
+3. **Fallback Logic**: Return mock data if external APIs fail
+
+**Response:**
+```javascript
+{
+  "services": [
+    {
+      "name": "Community Mental Health Center",
+      "phone": "(555) 123-4567", 
+      "address": "123 Main St, Seattle, WA",
+      "description": "Comprehensive mental health services"
+    }
+  ],
+  "location": "Seattle, King County, Washington, USA",
+  "source": "generated_data" // or "web_search", "fallback_data"
+}
+```
+
+#### `/api/v1/resources` - Mental Health Resource Compilation
+**Method**: POST  
+**Purpose**: Generate curated mental health resources based on conversation  
+**Fallback Strategy**: Returns static resources if OpenAI unavailable
+
+**Request Body:**
+```javascript
+{
+  "history": [
+    {"role": "user", "content": "I'm feeling anxious..."},
+    {"role": "assistant", "content": "I understand..."}
+  ]
+}
+```
+
+**Processing Logic:**
+1. **Context Extraction**: Identify user name, concerns, location from history
+2. **Resource Generation**: Use OpenAI to create personalized resource list
+3. **Fallback Resources**: Static list if API fails
+
+**Response:**
+```javascript
+{
+  "resources": "• National Mental Health Hotline: 988\n• Crisis Text Line: Text HOME to 741741\n• BetterHelp: Online therapy platform..."
+}
+```
+
+#### `/api/route.js` - Legacy Milvus Vector Search
+**Method**: POST  
+**Purpose**: Direct vector database operations (appears unused in current frontend)  
+**Status**: Legacy endpoint, superseded by stage-based query API
+
+**Stage-Based Operations:**
+```javascript
+switch (req_json.stage) {
+  case 0: // Simple greeting
+    return { msg: "Hello, I'm here to listen and support you. What is your name?" }
+    
+  case 1: // GPT conversation without vector search
+    // Direct OpenAI call with conversation history
+    // Returns: {msg} or {questions: [...]}
+    
+  case 2: // Vector-enhanced summary generation
+    // 1. Vectorize user input with text-embedding-ada-002
+    // 2. Search Milvus "mental_health_responses" collection
+    // 3. Use retrieved context for GPT summary generation
+    // Returns: {summary} or structured triage data
+}
+```
+
+**Vector Search Process:**
+1. **Embedding Generation**: Convert user text to 1536-dimension vectors
+2. **Similarity Search**: Query Milvus with `limit: 5` for top matches
+3. **Context Integration**: Feed retrieved contexts to GPT for enhanced responses
 
 ### Build Configuration
 - **Framework**: Next.js 15.2.4 (App Router)
@@ -161,13 +346,29 @@ First-Voice.AI/
 
 ### State Machine Pattern
 
-The application implements a **stage-based conversation flow** with the following states:
+The application implements a **stage-based conversation flow** with detailed sub-states:
 
 ```mermaid
 stateDiagram-v2
     [*] --> Stage0: App Load
     Stage0 --> Stage1: Start Call
-    Stage1 --> Stage1: Questions 1-6
+    
+    state Stage1 {
+        [*] --> Q1: Question 1
+        Q1 --> Q2: Answer Sufficient
+        Q1 --> Q1: Repeat/Clarify
+        Q2 --> Q3: Answer Sufficient
+        Q2 --> Q2: Repeat/Clarify
+        Q3 --> Q4: Answer Sufficient
+        Q3 --> Q3: Repeat/Clarify
+        Q4 --> Q5: Answer Sufficient
+        Q4 --> Q4: Repeat/Clarify
+        Q5 --> Q6: Answer Sufficient
+        Q5 --> Q5: Repeat/Clarify
+        Q6 --> [*]: Complete
+        Q6 --> Q6: Repeat/Clarify
+    }
+    
     Stage1 --> Stage2: All Questions Complete
     Stage2 --> Stage3: Summary Generated
     Stage3 --> PersonalHelp: Ask for Help
@@ -176,18 +377,52 @@ stateDiagram-v2
     
     note right of Stage1
         6-question structured flow:
-        1. Name/Location
-        2. Current feelings
-        3. Timeline/onset
-        4. Triggers
-        5. Coping strategies
-        6. Professional help openness
+        Q1: Name/Location introduction
+        Q2: Current emotional state
+        Q3: Timeline/onset identification  
+        Q4: Trigger identification
+        Q5: Coping strategies exploration
+        Q6: Professional help openness
     end note
 ```
 
 ### State Transitions & Guards
 
-#### Stage 1: Question Flow (`/app/api/v1/query/route.js:109-190`)
+#### Stage 1: 6-Question Structured Flow (`/app/api/v1/query/route.js:54-97`)
+
+Each question has a specific prompt and purpose:
+
+**Question 1: Initial Introduction & Onboarding**
+- **Purpose**: Collect name and optional location
+- **Prompt**: Warm introduction, ask for first name
+- **Transition**: Move to Q2 after sufficient response
+
+**Question 2: Exploring Current Emotional State**
+- **Purpose**: Understand current feelings and mental state
+- **Prompt**: "What's been on your mind lately?"
+- **Validation**: Reflect with compassion, avoid judgment
+
+**Question 3: Identifying When It Started**
+- **Purpose**: Timeline and onset identification
+- **Prompt**: "When did you first notice feeling this way?"
+- **Focus**: Gradual vs. event-triggered onset
+
+**Question 4: Understanding Triggers**
+- **Purpose**: Identify situational or thought triggers
+- **Prompt**: "What situations make these feelings stronger?"
+- **Response**: Mirror understanding, maintain compassion
+
+**Question 5: Exploring Coping Strategies**
+- **Purpose**: Assess current coping mechanisms
+- **Prompt**: "How have you been dealing with these feelings?"
+- **Approach**: Highlight strengths and resilience
+
+**Question 6: Forward-Looking Support**
+- **Purpose**: Assess openness to professional help
+- **Prompt**: "Would you be open to talking to a professional?"
+- **Tone**: Hopeful, no pressure, offer continued support
+
+#### Question Flow Logic (`/app/api/v1/query/route.js:109-190`)
 ```javascript
 // State: currentQuestion (1-6), answerSufficient (boolean)
 // Transition: Advance if answer sufficient, repeat if not
@@ -195,6 +430,12 @@ stateDiagram-v2
 
 if (isAnswerSufficient && currentQuestion < 6) {
     nextQuestionNumber = currentQuestion + 1;
+}
+
+// Force advance after 3 insufficient attempts
+if (repeatQuestionCount >= 2 && currentQuestion < 6) {
+    setCurrentQuestion(currentQuestion + 1);
+    setRepeatQuestionCount(0);
 }
 ```
 
@@ -391,10 +632,10 @@ vercel --prod
 
 ### Technical Architecture (6 bullets)
 - **Full-Stack Next.js**: React frontend with serverless API routes, deployed on Vercel with edge functions
-- **AI-Powered Conversations**: OpenAI GPT-4 with 6-stage structured mental health assessment flow
+- **AI-Powered Conversations**: OpenAI GPT-4 with 3-stage flow: 6-question assessment → summary generation → personalized help
 - **Voice Interface**: Web Speech API for STT + ElevenLabs for natural TTS with echo prevention
-- **Vector-Enhanced Context**: Milvus vector database for semantic search of mental health resources
-- **Real-Time State Management**: 40+ React hooks managing conversation flow, PDF generation, and location services
+- **Vector-Enhanced Context**: Milvus vector database for semantic search of mental health resources  
+- **Complex State Management**: 40+ React hooks managing 6-question flow, answer validation, PDF generation, and location services
 - **Privacy-First Design**: Anonymous sessions, client-side audio processing, minimal data retention
 
 ### Technology Choices & Trade-offs (4 bullets)
