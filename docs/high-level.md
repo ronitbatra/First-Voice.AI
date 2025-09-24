@@ -4,10 +4,10 @@
 
 ```mermaid
 graph TD
-    A[User/Patient] -->|1) Voice Conversation| B[First-Voice.AI Platform]
-    B -->|2) AI Assessment| C[Mental Health Analysis]
-    C -->|3) Personalized Summary| D[Resource Recommendations]
-    D -->|4) PDF Report| A
+    A[User/Patient] -->|Voice Conversation| B[First-Voice.AI Platform]
+    B -->|AI Assessment| C[Mental Health Analysis]
+    C -->|Personalized Summary| D[Resource Recommendations]
+    D -->|PDF Report| A
     
     B -.->|External Integration| E[Mental Health Services Database]
     B -.->|AI Processing| F[OpenAI GPT-4]
@@ -52,10 +52,10 @@ graph TD
     
     subgraph "API Layer - First-Voice.AI Core"
         C[Next.js API Routes]
-        C1["/api/v1/query"]
-        C2["/api/v1/doctorRecommendations"] 
-        C3["/api/v1/searchServices"]
-        C4["/api/v1/resources"]
+        C1[/api/v1/query]
+        C2[/api/v1/doctorRecommendations] 
+        C3[/api/v1/searchServices]
+        C4[/api/v1/resources]
     end
     
     subgraph "Data & AI Services"
