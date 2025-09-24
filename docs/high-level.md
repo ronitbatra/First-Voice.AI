@@ -52,10 +52,10 @@ graph TD
     
     subgraph "API Layer - First-Voice.AI Core"
         C[Next.js API Routes]
-        C1[/api/v1/query]
-        C2[/api/v1/doctorRecommendations] 
-        C3[/api/v1/searchServices]
-        C4[/api/v1/resources]
+        C1[Query API]
+        C2[Doctor Recommendations] 
+        C3[Search Services]
+        C4[Resource Compilation]
     end
     
     subgraph "Data & AI Services"
